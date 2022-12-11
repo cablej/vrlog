@@ -2,8 +2,8 @@
 
 VRLog provides a way to audit voter registration databases.
 
-# Installation
+## Installation
 
-# Running
+## Running
 
-# API
+## API
