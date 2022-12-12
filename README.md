@@ -1,6 +1,6 @@
 # VRLog: Voter Registration Transparency
 
-VRLog provides a way to audit voter registration databases.
+VRLog provides a transparent record of voter registration data using transparency logs.
 
 ## Setup
 
