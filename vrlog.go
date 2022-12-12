@@ -50,20 +50,24 @@ func addVoter(w http.ResponseWriter, r *http.Request) {
 	body, err := ioutil.ReadAll(r.Body)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
 	}
 	err = json.Unmarshal(body, &voter)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
 	}
 	_, ok := voter["id"]
 	if !ok {
 		http.Error(w, "id is required", http.StatusUnprocessableEntity)
+		return
 	}
 
 	// For production usage, disable WithInsecure()
 	g, err := grpc.Dial(*trillianMap, grpc.WithInsecure())
 	if err != nil {
-		log.Fatalf("Failed to dial Trillian Log: %v", err)
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
 	}
 	tmc := trillian.NewTrillianMapClient(g)
 	info := helpers.NewInfo(tmc, *mapID, context.Background())
@@ -77,6 +81,7 @@ func addVoter(w http.ResponseWriter, r *http.Request) {
 
 	if err != nil {
 		http.Error(w, "Error saving record", http.StatusInternalServerError)
+		return
 	}
 
 	jsonData, err := json.Marshal(map[string]interface{}{
@@ -85,6 +90,7 @@ func addVoter(w http.ResponseWriter, r *http.Request) {
 	})
 	if err != nil {
 		http.Error(w, "Error returning record", http.StatusInternalServerError)
+		return
 	}
 	w.Header().Set("Content-Type", "application/json")
 	w.Write(jsonData)
@@ -98,12 +104,14 @@ func getVoter(w http.ResponseWriter, r *http.Request) {
 	g, err := grpc.Dial(*trillianMap, grpc.WithInsecure())
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
 	}
 	tmc := trillian.NewTrillianMapClient(g)
 
 	resp := helpers.GetValue(tmc, *mapID, helpers.Hash(id))
 	if resp == nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
+		http.Error(w, "Record not found", http.StatusNotFound)
+		return
 	} else {
 		w.Header().Set("Content-Type", "application/json")
 		w.Write([]byte(*resp))
