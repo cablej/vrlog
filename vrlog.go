@@ -97,7 +97,6 @@ func addVoter(w http.ResponseWriter, r *http.Request) {
 }
 
 func getVoter(w http.ResponseWriter, r *http.Request) {
-	// parse id query param
 	id := r.URL.Query().Get("id")
 
 	// For production usage, disable WithInsecure()
