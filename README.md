@@ -1,4 +1,4 @@
-# VRLog: The Voter Registration Log
+# VRLog: Voter Registration Transparency
 
 VRLog provides a way to audit voter registration databases.
 
