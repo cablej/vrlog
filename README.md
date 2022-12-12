@@ -10,4 +10,21 @@ VRLog provides a transparent record of voter registration data using transparenc
 
 ## Running
 
+1. Run `make mapper` to start the server.
+2. Navigate to `http://localhost:8084`
+
 ## API
+
+VRLog supports the following API endpoints:
+
+- `POST /voter`
+
+Creates or updates a voter. `id` is required.
+
+Example body:
+
+`{"firstName": "Test", "lastName": "Voter", "id": "1234"}`
+
+- `GET /voter?id=id`
+
+Fetches the stored entry given the public id.

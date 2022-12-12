@@ -117,10 +117,19 @@ func getVoter(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func voter(w http.ResponseWriter, r *http.Request) {
+	switch r.Method {
+	case "GET":
+		getVoter(w, r)
+	case "POST":
+		addVoter(w, r)
+	default:
+		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
+	}
+}
+
 func main() {
 	flag.Parse()
-
-	http.HandleFunc("/add_voter", addVoter)
-	http.HandleFunc("/get_voter", getVoter)
+	http.HandleFunc("/voter", voter)
 	log.Fatal(http.ListenAndServe("localhost:8084", nil))
 }
