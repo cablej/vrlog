@@ -18,7 +18,7 @@ VRLog provides a transparent record of voter registration data using transparenc
 
 VRLog supports the following API endpoints:
 
-- `POST /voter`
+#### `POST /voter`
 
 Creates or updates a voter. `id` is required.
 
@@ -26,6 +26,6 @@ Example body:
 
 `{"firstName": "Test", "lastName": "Voter", "id": "1234"}`
 
-- `GET /voter?id=id`
+#### `GET /voter?id=id`
 
 Fetches the stored entry given the public id.
