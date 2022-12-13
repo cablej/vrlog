@@ -29,3 +29,11 @@ Example body:
 #### `GET /voter?id=id`
 
 Fetches the stored entry given the public id.
+
+#### `DELETE /voter?id=id`
+
+Cancels the voter record given the public id.
+
+#### `GET /voter/prove?id=id`
+
+Returns the membership proof for the given public id.
