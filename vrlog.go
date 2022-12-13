@@ -12,6 +12,7 @@ import (
 	"log"
 	"net/http"
 	"strings"
+	"time"
 
 	"github.com/cablej/vrlog/helpers"
 	"github.com/google/trillian"
@@ -26,6 +27,29 @@ var (
 	fieldsStr   = flag.String("fields", "id,firstName,lastName,dob,ssn", "Comma-separated list of fields to include in the voter record.")
 	fields      = strings.Split(*fieldsStr, ",")
 )
+
+type Metadata struct {
+	Version int           `json:"version"`
+	History []HistoryItem `json:"history"`
+}
+
+type HistoryItem struct {
+	Date      time.Time `json:"date"`
+	EventType string    `json:"eventType"`
+	Signature string    `json:"signature"`
+	Signer    string    `json:"signer"`
+}
+
+func initTrillian() (*grpc.ClientConn, *trillian.TrillianMapClient, *helpers.MapInfo, error) {
+	// For production usage, disable WithInsecure()
+	g, err := grpc.Dial(*trillianMap, grpc.WithInsecure())
+	if err != nil {
+		return nil, nil, nil, err
+	}
+	tmc := trillian.NewTrillianMapClient(g)
+	info := helpers.NewInfo(tmc, *mapID, context.Background())
+	return g, &tmc, info, nil
+}
 
 func computeHmac(key string, data string) string {
 	h := hmac.New(sha256.New, []byte(key))
@@ -43,6 +67,43 @@ func hashVoter(voter map[string]string) map[string]string {
 		hashedVoter[field] = hex.EncodeToString(helpers.Hash(fmt.Sprintf("%s|%s", val, salt)))
 	}
 	return hashedVoter
+}
+
+func parseAndUpdateMetadata(tmc *trillian.TrillianMapClient, r_id string, historyItem HistoryItem) (metadata string, error string) {
+	var meta Metadata
+	existingVoter := helpers.GetValue(tmc, *mapID, helpers.Hash(r_id))
+	if existingVoter != nil {
+		var existingVoterJSON map[string]string
+		err := json.Unmarshal([]byte(*existingVoter), &existingVoterJSON)
+		if err != nil {
+			return "", "Malformed record"
+		}
+
+		err = json.Unmarshal([]byte(existingVoterJSON["metadata"]), &meta)
+		if err != nil {
+			return "", "Malformed record"
+		}
+
+		meta.Version = meta.Version + 1
+		meta.History = append(meta.History, historyItem)
+	} else {
+		meta = Metadata{
+			Version: 0,
+			History: []HistoryItem{},
+		}
+		// TODO: allow importing existing records
+		meta.History = append(meta.History, HistoryItem{
+			Date:      time.Now(),
+			EventType: "register",
+			Signature: "",
+			Signer:    "",
+		})
+	}
+	jsonData, err := json.Marshal(meta)
+	if err != nil {
+		return "", "Error marshalling metadata"
+	}
+	return string(jsonData)[:], ""
 }
 
 func addVoter(w http.ResponseWriter, r *http.Request) {
@@ -63,21 +124,34 @@ func addVoter(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// For production usage, disable WithInsecure()
-	g, err := grpc.Dial(*trillianMap, grpc.WithInsecure())
+	g, tmc, info, err := initTrillian()
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	tmc := trillian.NewTrillianMapClient(g)
-	info := helpers.NewInfo(tmc, *mapID, context.Background())
 
 	r_id := computeHmac(*idKey, voter["id"])
 	hashed := hashVoter(voter)
+	meta, error := parseAndUpdateMetadata(tmc, r_id, HistoryItem{
+		Date:      time.Now(),
+		EventType: "update",
+		Signature: "",
+		Signer:    "",
+	})
+	if error != "" {
+		http.Error(w, "Error: "+error, http.StatusInternalServerError)
+		return
+	}
+	hashed["metadata"] = meta
 
-	revision := helpers.GetRevision(info, g) + 1
+	revision, err := helpers.GetRevision(info, g)
+	if err != nil {
+		http.Error(w, "Error getting revision", http.StatusInternalServerError)
+		return
+	}
+	revision = revision + 1
 
-	info.SaveRecord(r_id, hashed, revision)
+	err = info.SaveRecord(r_id, hashed, revision)
 
 	if err != nil {
 		http.Error(w, "Error saving record", http.StatusInternalServerError)
@@ -99,13 +173,11 @@ func addVoter(w http.ResponseWriter, r *http.Request) {
 func getVoter(w http.ResponseWriter, r *http.Request) {
 	id := r.URL.Query().Get("id")
 
-	// For production usage, disable WithInsecure()
-	g, err := grpc.Dial(*trillianMap, grpc.WithInsecure())
+	_, tmc, _, err := initTrillian()
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	tmc := trillian.NewTrillianMapClient(g)
 
 	resp := helpers.GetValue(tmc, *mapID, helpers.Hash(id))
 	if resp == nil {

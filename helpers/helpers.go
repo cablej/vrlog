@@ -31,8 +31,6 @@ func Hash(key string) []byte {
 // Helper function to return the public key of a given map ID
 func GetKey(conn *grpc.ClientConn, logID int64) (interface{}, error) {
 	a := trillian.NewTrillianAdminClient(conn)
-	log.Printf("Getting key for log %d", logID)
-	log.Printf("%s", context.Background())
 	tree, err := a.GetTree(context.Background(), &trillian.GetTreeRequest{TreeId: logID})
 	if err != nil {
 		return nil, fmt.Errorf("call to GetTree failed: %v", err)
@@ -46,31 +44,33 @@ func GetKey(conn *grpc.ClientConn, logID int64) (interface{}, error) {
 	return x509.ParsePKIXPublicKey(publicKey.GetDer())
 }
 
-func GetRevision(info *MapInfo, g *grpc.ClientConn) int64 {
+func GetRevision(info *MapInfo, g *grpc.ClientConn) (int64, error) {
 	signedMapRootResp, err := info.Tc.GetSignedMapRoot(info.Ctx, &trillian.GetSignedMapRootRequest{
 		MapId: info.MapID,
 	})
 
 	pubKey, err := GetKey(g, info.MapID)
 	if err != nil {
-		log.Fatalf("Failed to get key: %v", err)
+		log.Printf("Failed to get key: %v", err)
+		return 0, err
 	}
 	mrv1, err := crypto.VerifySignedMapRoot(pubKey, gocrypto.SHA256, signedMapRootResp.MapRoot)
 	if err != nil {
-		log.Fatalf("Failed to verify signed root: %v", err)
+		log.Printf("Failed to verify signed root: %v", err)
+		return 0, err
 	}
 
-	return int64(mrv1.Revision)
+	return int64(mrv1.Revision), nil
 }
 
-func GetValue(tmc trillian.TrillianMapClient, id int64, hash []byte) *string {
+func GetValue(tmc *trillian.TrillianMapClient, id int64, hash []byte) *string {
 	index := [1][]byte{hash}
 	req := &trillian.GetMapLeavesRequest{
 		MapId: id,
 		Index: index[:],
 	}
 
-	resp, err := tmc.GetLeaves(context.Background(), req)
+	resp, err := (*tmc).GetLeaves(context.Background(), req)
 	if err != nil {
 		log.Printf("Can't get leaf '%s': %v", hex.EncodeToString(hash), err)
 		return nil
@@ -83,7 +83,7 @@ func GetValue(tmc trillian.TrillianMapClient, id int64, hash []byte) *string {
 }
 
 // Internal helper function to add record to map
-func (i *MapInfo) addToMap(h []byte, v []byte, revision int64) {
+func (i *MapInfo) addToMap(h []byte, v []byte, revision int64) error {
 	l := trillian.MapLeaf{
 		Index:     h,
 		LeafValue: v,
@@ -96,21 +96,25 @@ func (i *MapInfo) addToMap(h []byte, v []byte, revision int64) {
 	}
 
 	if _, err := i.Tc.SetLeaves(i.Ctx, &req); err != nil {
-		log.Fatalf("SetLeaves() failed: %v", err)
+		log.Printf("SetLeaves() failed: %v", err)
+		return err
 	}
+	return nil
 }
 
 // Converts record to JSON and hashes it before adding to map
-func (i *MapInfo) SaveRecord(key string, value interface{}, revision int64) {
-	fmt.Printf("evicting %v -> %v\n", key, value)
-
+func (i *MapInfo) SaveRecord(key string, value interface{}, revision int64) error {
 	v, err := json.Marshal(value)
 	if err != nil {
-		log.Fatalf("Marshal() failed: %v", err)
+		log.Printf("Marshal() failed: %v", err)
+		return err
 	}
 
 	hash := Hash(key)
-	i.addToMap(hash, v, revision)
+	if err := i.addToMap(hash, v, revision); err != nil {
+		return err
+	}
+	return nil
 }
 
 // Helper function to convert fields into mapInfo struct
