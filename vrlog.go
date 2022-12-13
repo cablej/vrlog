@@ -66,12 +66,13 @@ func hashVoter(voter map[string]string) map[string]string {
 		val := voter[field]
 		hashedVoter[field] = hex.EncodeToString(helpers.Hash(fmt.Sprintf("%s|%s", val, salt)))
 	}
+	// status is not hashed
+	hashedVoter["status"] = voter["status"]
 	return hashedVoter
 }
 
-func parseAndUpdateMetadata(tmc *trillian.TrillianMapClient, r_id string, historyItem HistoryItem) (metadata string, error string) {
+func parseAndUpdateMetadata(existingVoter *string, tmc *trillian.TrillianMapClient, r_id string, historyItem HistoryItem) (metadata string, error string) {
 	var meta Metadata
-	existingVoter := helpers.GetValue(tmc, *mapID, helpers.Hash(r_id))
 	if existingVoter != nil {
 		var existingVoterJSON map[string]string
 		err := json.Unmarshal([]byte(*existingVoter), &existingVoterJSON)
@@ -118,9 +119,13 @@ func addVoter(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	_, ok := voter["id"]
-	if !ok {
+	if _, ok := voter["id"]; !ok {
 		http.Error(w, "id is required", http.StatusUnprocessableEntity)
+		return
+	}
+
+	if _, ok := voter["status"]; !ok {
+		http.Error(w, "status is required", http.StatusUnprocessableEntity)
 		return
 	}
 
@@ -132,7 +137,8 @@ func addVoter(w http.ResponseWriter, r *http.Request) {
 
 	r_id := computeHmac(*idKey, voter["id"])
 	hashed := hashVoter(voter)
-	meta, error := parseAndUpdateMetadata(tmc, r_id, HistoryItem{
+	existingVoter := helpers.GetValue(tmc, *mapID, helpers.Hash(r_id))
+	meta, error := parseAndUpdateMetadata(existingVoter, tmc, r_id, HistoryItem{
 		Date:      time.Now(),
 		EventType: "update",
 		Signature: "",
@@ -144,14 +150,7 @@ func addVoter(w http.ResponseWriter, r *http.Request) {
 	}
 	hashed["metadata"] = meta
 
-	revision, err := helpers.GetRevision(info, g)
-	if err != nil {
-		http.Error(w, "Error getting revision", http.StatusInternalServerError)
-		return
-	}
-	revision = revision + 1
-
-	err = info.SaveRecord(r_id, hashed, revision)
+	err = info.SaveRecord(r_id, hashed, g)
 
 	if err != nil {
 		http.Error(w, "Error saving record", http.StatusInternalServerError)
@@ -189,12 +188,65 @@ func getVoter(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func cancelVoter(w http.ResponseWriter, r *http.Request) {
+	id := r.URL.Query().Get("id")
+
+	g, tmc, info, err := initTrillian()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	voter := helpers.GetValue(tmc, *mapID, helpers.Hash(id))
+	if voter == nil {
+		http.Error(w, "Record not found", http.StatusNotFound)
+		return
+	}
+	meta, error := parseAndUpdateMetadata(voter, tmc, id, HistoryItem{
+		Date:      time.Now(),
+		EventType: "cancel",
+		Signature: "",
+		Signer:    "",
+	})
+	if error != "" {
+		http.Error(w, "Error: "+error, http.StatusInternalServerError)
+		return
+	}
+	var voterParsed map[string]string
+	err = json.Unmarshal([]byte(*voter), &voterParsed)
+	if err != nil {
+		http.Error(w, "Record not found", http.StatusNotFound)
+	}
+	voterParsed["metadata"] = meta
+	voterParsed["status"] = "cancelled"
+
+	err = info.SaveRecord(id, voterParsed, g)
+
+	if err != nil {
+		http.Error(w, "Error saving record", http.StatusInternalServerError)
+		return
+	}
+
+	jsonData, err := json.Marshal(map[string]interface{}{
+		"id":   id,
+		"data": voterParsed,
+	})
+	if err != nil {
+		http.Error(w, "Error returning record", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Write(jsonData)
+}
+
 func voter(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case "GET":
 		getVoter(w, r)
 	case "POST":
 		addVoter(w, r)
+	case "DELETE":
+		cancelVoter(w, r)
 	default:
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 	}

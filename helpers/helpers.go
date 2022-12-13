@@ -48,6 +48,10 @@ func GetRevision(info *MapInfo, g *grpc.ClientConn) (int64, error) {
 	signedMapRootResp, err := info.Tc.GetSignedMapRoot(info.Ctx, &trillian.GetSignedMapRootRequest{
 		MapId: info.MapID,
 	})
+	if err != nil {
+		log.Printf("Failed to get signed map root: %v", err)
+		return 0, err
+	}
 
 	pubKey, err := GetKey(g, info.MapID)
 	if err != nil {
@@ -103,7 +107,13 @@ func (i *MapInfo) addToMap(h []byte, v []byte, revision int64) error {
 }
 
 // Converts record to JSON and hashes it before adding to map
-func (i *MapInfo) SaveRecord(key string, value interface{}, revision int64) error {
+func (i *MapInfo) SaveRecord(key string, value interface{}, g *grpc.ClientConn) error {
+	revision, err := GetRevision(i, g)
+	if err != nil {
+		return err
+	}
+	revision = revision + 1
+
 	v, err := json.Marshal(value)
 	if err != nil {
 		log.Printf("Marshal() failed: %v", err)
