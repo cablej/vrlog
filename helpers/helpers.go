@@ -67,6 +67,21 @@ func GetRevision(info *MapInfo, g *grpc.ClientConn) (int64, error) {
 	return int64(mrv1.Revision), nil
 }
 
+func GetInclusionProof(tmc *trillian.TrillianMapClient, id int64, hash []byte) *trillian.GetMapLeavesResponse {
+	index := [1][]byte{hash}
+	req := &trillian.GetMapLeavesRequest{
+		MapId: id,
+		Index: index[:],
+	}
+
+	resp, err := (*tmc).GetLeaves(context.Background(), req)
+	if err != nil {
+		log.Printf("Can't get leaf '%s': %v", hex.EncodeToString(hash), err)
+		return nil
+	}
+	return resp
+}
+
 func GetValue(tmc *trillian.TrillianMapClient, id int64, hash []byte) *string {
 	index := [1][]byte{hash}
 	req := &trillian.GetMapLeavesRequest{

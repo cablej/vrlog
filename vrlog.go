@@ -239,6 +239,30 @@ func cancelVoter(w http.ResponseWriter, r *http.Request) {
 	w.Write(jsonData)
 }
 
+func proveMembership(w http.ResponseWriter, r *http.Request) {
+	id := r.URL.Query().Get("id")
+
+	_, tmc, _, err := initTrillian()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	resp := helpers.GetInclusionProof(tmc, *mapID, helpers.Hash(id))
+	if resp == nil {
+		http.Error(w, "Record not found", http.StatusNotFound)
+		return
+	} else {
+		jsonData, err := json.Marshal(resp)
+		if err != nil {
+			http.Error(w, "Error returning record", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(jsonData)
+	}
+}
+
 func voter(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case "GET":
@@ -255,5 +279,6 @@ func voter(w http.ResponseWriter, r *http.Request) {
 func main() {
 	flag.Parse()
 	http.HandleFunc("/voter", voter)
+	http.HandleFunc("/voter/prove", proveMembership)
 	log.Fatal(http.ListenAndServe("localhost:8084", nil))
 }
