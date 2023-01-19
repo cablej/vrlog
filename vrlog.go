@@ -146,18 +146,18 @@ func addVoter(w http.ResponseWriter, r *http.Request) {
 	}
 
 	gLog, _, logInfo, err := initTrillianLog()
-	defer gLog.Close()
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	defer gLog.Close()
 
 	gMap, tmc, mapInfo, err := initTrillianMap()
-	defer gMap.Close()
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	defer gMap.Close()
 
 	r_id := computeHmac(*idKey, voter["id"])
 	hashed := hashVoter(voter)
@@ -176,14 +176,12 @@ func addVoter(w http.ResponseWriter, r *http.Request) {
 	hashed["public_id"] = r_id
 
 	err = logInfo.SaveRecord(r_id, hashed, gLog)
-
 	if err != nil {
 		http.Error(w, "Error saving record", http.StatusInternalServerError)
 		return
 	}
 
 	err = mapInfo.SaveRecord(r_id, hashed, gMap)
-
 	if err != nil {
 		http.Error(w, "Error saving record", http.StatusInternalServerError)
 		return
@@ -220,14 +218,22 @@ func getVoter(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
-func cancelVoter(w http.ResponseWriter, r *http.Request) {
+func makeVoterInactive(w http.ResponseWriter, r *http.Request) {
 	id := r.URL.Query().Get("id")
 
-	g, tmc, info, err := initTrillianMap()
+	gLog, _, logInfo, err := initTrillianLog()
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
+	defer gLog.Close()
+
+	gMap, tmc, mapInfo, err := initTrillianMap()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	defer gMap.Close()
 
 	voter := helpers.GetValue(tmc, *mapID, helpers.Hash(id))
 	if voter == nil {
@@ -251,9 +257,15 @@ func cancelVoter(w http.ResponseWriter, r *http.Request) {
 	}
 	voterParsed["metadata"] = meta
 	voterParsed["status"] = "cancelled"
+	voterParsed["public_id"] = id
 
-	err = info.SaveRecord(id, voterParsed, g)
+	err = logInfo.SaveRecord(id, voterParsed, gLog)
+	if err != nil {
+		http.Error(w, "Error saving record", http.StatusInternalServerError)
+		return
+	}
 
+	err = mapInfo.SaveRecord(id, voterParsed, gMap)
 	if err != nil {
 		http.Error(w, "Error saving record", http.StatusInternalServerError)
 		return
@@ -302,7 +314,7 @@ func voter(w http.ResponseWriter, r *http.Request) {
 	case "POST":
 		addVoter(w, r)
 	case "DELETE":
-		cancelVoter(w, r)
+		makeVoterInactive(w, r)
 	default:
 		http.Error(w, "Method not allowed", http.StatusMethodNotAllowed)
 	}

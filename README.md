@@ -32,7 +32,7 @@ Fetches the stored entry given the public id.
 
 #### `DELETE /voter?id=id`
 
-Cancels the voter record given the public id.
+Marks the voter registration as inactive given the public id.
 
 #### `GET /voter/prove?id=id`
 
