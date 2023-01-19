@@ -14,7 +14,14 @@ import (
 	"github.com/google/trillian"
 	"github.com/google/trillian/crypto"
 	"google.golang.org/grpc"
+	"google.golang.org/grpc/codes"
 )
+
+type LogInfo struct {
+	LogID int64
+	Tc    trillian.TrillianLogClient
+	Ctx   context.Context
+}
 
 type MapInfo struct {
 	MapID    int64
@@ -142,8 +149,39 @@ func (i *MapInfo) SaveRecord(key string, value interface{}, g *grpc.ClientConn) 
 	return nil
 }
 
+// Converts record to JSON and hashes it before adding to map
+func (i *LogInfo) SaveRecord(key string, value interface{}, g *grpc.ClientConn) error {
+	v, err := json.Marshal(value)
+	if err != nil {
+		log.Printf("Marshal() failed: %v", err)
+		return err
+	}
+
+	// Send to Trillian
+	tl := &trillian.LogLeaf{LeafValue: v}
+	q := &trillian.QueueLeafRequest{LogId: i.LogID, Leaf: tl}
+	r, err := i.Tc.QueueLeaf(i.Ctx, q)
+	if err != nil {
+		return err
+	}
+
+	// And check everything worked
+	c := codes.Code(r.QueuedLeaf.GetStatus().GetCode())
+	if c != codes.OK && c != codes.AlreadyExists {
+		return fmt.Errorf("bad return status: %v", r.QueuedLeaf.GetStatus())
+	}
+
+	return nil
+}
+
 // Helper function to convert fields into mapInfo struct
-func NewInfo(tc trillian.TrillianMapClient, mapID int64, ctx context.Context) *MapInfo {
+func NewLogInfo(tc trillian.TrillianLogClient, logID int64, ctx context.Context) *LogInfo {
+	i := &LogInfo{LogID: logID, Tc: tc, Ctx: ctx}
+	return i
+}
+
+// Helper function to convert fields into mapInfo struct
+func NewMapInfo(tc trillian.TrillianMapClient, mapID int64, ctx context.Context) *MapInfo {
 	// FIXME: need to figure out current keyCount...
 	i := &MapInfo{MapID: mapID, Tc: tc, Ctx: ctx}
 	return i

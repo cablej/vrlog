@@ -21,7 +21,9 @@ import (
 
 var (
 	trillianMap = flag.String("trillian_map", "localhost:8093", "address of the Trillian Map RPC server.")
+	trillianLog = flag.String("trillian_log", "localhost:8090", "address of the Trillian Log RPC server.")
 	mapID       = flag.Int64("map_id", 0, "Trillian MapID to write.")
+	logID       = flag.Int64("log_id", 0, "Trillian LogID to write.")
 	idKey       = flag.String("id_key", "secret1", "Key to use to generate ids.")
 	saltKey     = flag.String("salt_key", "secret2", "Key used to generate salts.")
 	fieldsStr   = flag.String("fields", "id,firstName,lastName,dob,ssn", "Comma-separated list of fields to include in the voter record.")
@@ -40,15 +42,28 @@ type HistoryItem struct {
 	Signer    string    `json:"signer"`
 }
 
-func initTrillian() (*grpc.ClientConn, *trillian.TrillianMapClient, *helpers.MapInfo, error) {
+func initTrillianMap() (*grpc.ClientConn, *trillian.TrillianMapClient, *helpers.MapInfo, error) {
 	// For production usage, disable WithInsecure()
 	g, err := grpc.Dial(*trillianMap, grpc.WithInsecure())
 	if err != nil {
 		return nil, nil, nil, err
 	}
 	tmc := trillian.NewTrillianMapClient(g)
-	info := helpers.NewInfo(tmc, *mapID, context.Background())
+	info := helpers.NewMapInfo(tmc, *mapID, context.Background())
 	return g, &tmc, info, nil
+}
+
+func initTrillianLog() (*grpc.ClientConn, *trillian.TrillianLogClient, *helpers.LogInfo, error) {
+	// For production usage, disable WithInsecure()
+	g, err := grpc.Dial(*trillianLog, grpc.WithInsecure())
+	if err != nil {
+		return nil, nil, nil, err
+	}
+
+	tc := trillian.NewTrillianLogClient(g)
+	info := helpers.NewLogInfo(tc, *logID, context.Background())
+
+	return g, &tc, info, nil
 }
 
 func computeHmac(key string, data string) string {
@@ -71,7 +86,8 @@ func hashVoter(voter map[string]string) map[string]string {
 	return hashedVoter
 }
 
-func parseAndUpdateMetadata(existingVoter *string, tmc *trillian.TrillianMapClient, r_id string, historyItem HistoryItem) (metadata string, error string) {
+// TODO: consider storing a diff in the future
+func parseAndUpdateMetadata(existingVoter *string, r_id string, historyItem HistoryItem) (metadata string, error string) {
 	var meta Metadata
 	if existingVoter != nil {
 		var existingVoterJSON map[string]string
@@ -129,7 +145,15 @@ func addVoter(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	g, tmc, info, err := initTrillian()
+	gLog, _, logInfo, err := initTrillianLog()
+	defer gLog.Close()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	gMap, tmc, _, err := initTrillianMap()
+	defer gMap.Close()
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -138,7 +162,7 @@ func addVoter(w http.ResponseWriter, r *http.Request) {
 	r_id := computeHmac(*idKey, voter["id"])
 	hashed := hashVoter(voter)
 	existingVoter := helpers.GetValue(tmc, *mapID, helpers.Hash(r_id))
-	meta, error := parseAndUpdateMetadata(existingVoter, tmc, r_id, HistoryItem{
+	meta, error := parseAndUpdateMetadata(existingVoter, r_id, HistoryItem{
 		Date:      time.Now(),
 		EventType: "update",
 		Signature: "",
@@ -150,7 +174,7 @@ func addVoter(w http.ResponseWriter, r *http.Request) {
 	}
 	hashed["metadata"] = meta
 
-	err = info.SaveRecord(r_id, hashed, g)
+	err = logInfo.SaveRecord(r_id, hashed, gLog)
 
 	if err != nil {
 		http.Error(w, "Error saving record", http.StatusInternalServerError)
@@ -172,7 +196,7 @@ func addVoter(w http.ResponseWriter, r *http.Request) {
 func getVoter(w http.ResponseWriter, r *http.Request) {
 	id := r.URL.Query().Get("id")
 
-	_, tmc, _, err := initTrillian()
+	_, tmc, _, err := initTrillianMap()
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -191,7 +215,7 @@ func getVoter(w http.ResponseWriter, r *http.Request) {
 func cancelVoter(w http.ResponseWriter, r *http.Request) {
 	id := r.URL.Query().Get("id")
 
-	g, tmc, info, err := initTrillian()
+	g, tmc, info, err := initTrillianMap()
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -202,7 +226,7 @@ func cancelVoter(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Record not found", http.StatusNotFound)
 		return
 	}
-	meta, error := parseAndUpdateMetadata(voter, tmc, id, HistoryItem{
+	meta, error := parseAndUpdateMetadata(voter, id, HistoryItem{
 		Date:      time.Now(),
 		EventType: "cancel",
 		Signature: "",
@@ -242,7 +266,7 @@ func cancelVoter(w http.ResponseWriter, r *http.Request) {
 func proveMembership(w http.ResponseWriter, r *http.Request) {
 	id := r.URL.Query().Get("id")
 
-	_, tmc, _, err := initTrillian()
+	_, tmc, _, err := initTrillianMap()
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return

@@ -42,7 +42,7 @@ deletemap::
 	rm $R/mapid
 
 mapper::
-	go run vrlog.go --map_id=`cat mapid`
+	go run vrlog.go --map_id=`cat mapid` --log_id=`cat logid`
 
 extractmap::
 	go run extractmap/main.go --map_id=`cat mapid` 0
