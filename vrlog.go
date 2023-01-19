@@ -152,7 +152,7 @@ func addVoter(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	gMap, tmc, _, err := initTrillianMap()
+	gMap, tmc, mapInfo, err := initTrillianMap()
 	defer gMap.Close()
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -173,8 +173,16 @@ func addVoter(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	hashed["metadata"] = meta
+	hashed["public_id"] = r_id
 
 	err = logInfo.SaveRecord(r_id, hashed, gLog)
+
+	if err != nil {
+		http.Error(w, "Error saving record", http.StatusInternalServerError)
+		return
+	}
+
+	err = mapInfo.SaveRecord(r_id, hashed, gMap)
 
 	if err != nil {
 		http.Error(w, "Error saving record", http.StatusInternalServerError)
