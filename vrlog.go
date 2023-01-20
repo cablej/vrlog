@@ -205,7 +205,6 @@ func addVoter(w http.ResponseWriter, r *http.Request) {
 	defer gMap.Close()
 
 	r_id := computeHmac(*idKey, voter["id"])
-	log.Printf("voter: %s", voter)
 	hashed := hashVoter(voter)
 	existingVoter := helpers.GetValue(tmc, *mapID, helpers.Hash(r_id))
 	meta, error := parseAndUpdateMetadata(existingVoter, r_id, HistoryItem{
