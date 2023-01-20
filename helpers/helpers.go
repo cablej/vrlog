@@ -150,7 +150,7 @@ func (i *MapInfo) SaveRecord(key string, value interface{}, g *grpc.ClientConn) 
 }
 
 // Converts record to JSON and hashes it before adding to map
-func (i *LogInfo) SaveRecord(key string, value interface{}, g *grpc.ClientConn) error {
+func (i *LogInfo) SaveRecord(value interface{}, g *grpc.ClientConn) error {
 	v, err := json.Marshal(value)
 	if err != nil {
 		log.Printf("Marshal() failed: %v", err)

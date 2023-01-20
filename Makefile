@@ -19,6 +19,11 @@ createlog:: $R/logid
 $R/logid:
 	go run github.com/google/trillian/cmd/createtree --admin_server=localhost:8090 > $R/logid
 
+createmaplog:: $R/maplogid
+
+$R/maplogid:
+	go run github.com/google/trillian/cmd/createtree --admin_server=localhost:8090 > $R/maplogid
+
 deletelog::
 	cd $T && go run cmd/deletetree/main.go --admin_server=localhost:8090 --log_id=`cat $R/logid`
 	rm $R/logid
@@ -42,7 +47,7 @@ deletemap::
 	rm $R/mapid
 
 mapper::
-	go run vrlog.go --map_id=`cat mapid` --log_id=`cat logid`
+	go run vrlog.go --map_id=`cat mapid` --log_id=`cat logid` --map_log_id=`cat maplogid`
 
 extractmap::
 	go run extractmap/main.go --map_id=`cat mapid` 0

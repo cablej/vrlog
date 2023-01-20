@@ -24,6 +24,7 @@ var (
 	trillianLog = flag.String("trillian_log", "localhost:8090", "address of the Trillian Log RPC server.")
 	mapID       = flag.Int64("map_id", 0, "Trillian MapID to write.")
 	logID       = flag.Int64("log_id", 0, "Trillian LogID to write.")
+	mapLogID    = flag.Int64("map_log_id", 0, "Trillian Map Log ID to write.")
 	idKey       = flag.String("id_key", "secret1", "Key to use to generate ids.")
 	saltKey     = flag.String("salt_key", "secret2", "Key used to generate salts.")
 	fieldsStr   = flag.String("fields", "id,firstName,lastName,dob,ssn", "Comma-separated list of fields to include in the voter record.")
@@ -64,6 +65,50 @@ func initTrillianLog() (*grpc.ClientConn, *trillian.TrillianLogClient, *helpers.
 	info := helpers.NewLogInfo(tc, *logID, context.Background())
 
 	return g, &tc, info, nil
+}
+
+func initTrillianMapLog() (*grpc.ClientConn, *trillian.TrillianLogClient, *helpers.LogInfo, error) {
+	// For production usage, disable WithInsecure()
+	g, err := grpc.Dial(*trillianLog, grpc.WithInsecure())
+	if err != nil {
+		return nil, nil, nil, err
+	}
+
+	tc := trillian.NewTrillianLogClient(g)
+	info := helpers.NewLogInfo(tc, *mapLogID, context.Background())
+
+	return g, &tc, info, nil
+}
+
+func writeMapHeadToLog() error {
+	gMap, tmc, mapInfo, err := initTrillianMap()
+	if err != nil {
+		log.Fatalf("Failed to init Trillian Map: %v", err)
+	}
+	defer gMap.Close()
+
+	signedMapRootResp, err := (*tmc).GetSignedMapRoot(mapInfo.Ctx, &trillian.GetSignedMapRootRequest{
+		MapId: mapInfo.MapID,
+	})
+	if err != nil {
+		log.Printf("Failed to get signed map root: %v", err)
+		return err
+	}
+
+	gLog, _, logInfo, err := initTrillianMapLog()
+	if err != nil {
+		log.Printf("Failed to init map log")
+		return err
+	}
+	defer gLog.Close()
+
+	err = logInfo.SaveRecord(signedMapRootResp.MapRoot, gLog)
+	if err != nil {
+		log.Printf("Error saving map log record")
+		return err
+	}
+
+	return nil
 }
 
 func computeHmac(key string, data string) string {
@@ -160,6 +205,7 @@ func addVoter(w http.ResponseWriter, r *http.Request) {
 	defer gMap.Close()
 
 	r_id := computeHmac(*idKey, voter["id"])
+	log.Printf("voter: %s", voter)
 	hashed := hashVoter(voter)
 	existingVoter := helpers.GetValue(tmc, *mapID, helpers.Hash(r_id))
 	meta, error := parseAndUpdateMetadata(existingVoter, r_id, HistoryItem{
@@ -175,7 +221,7 @@ func addVoter(w http.ResponseWriter, r *http.Request) {
 	hashed["metadata"] = meta
 	hashed["public_id"] = r_id
 
-	err = logInfo.SaveRecord(r_id, hashed, gLog)
+	err = logInfo.SaveRecord(hashed, gLog)
 	if err != nil {
 		http.Error(w, "Error saving record", http.StatusInternalServerError)
 		return
@@ -195,6 +241,13 @@ func addVoter(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Error returning record", http.StatusInternalServerError)
 		return
 	}
+
+	err = writeMapHeadToLog()
+	if err != nil {
+		http.Error(w, "Error writing map head to log", http.StatusInternalServerError)
+		return
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	w.Write(jsonData)
 }
@@ -259,7 +312,7 @@ func makeVoterInactive(w http.ResponseWriter, r *http.Request) {
 	voterParsed["status"] = "cancelled"
 	voterParsed["public_id"] = id
 
-	err = logInfo.SaveRecord(id, voterParsed, gLog)
+	err = logInfo.SaveRecord(voterParsed, gLog)
 	if err != nil {
 		http.Error(w, "Error saving record", http.StatusInternalServerError)
 		return
@@ -279,6 +332,13 @@ func makeVoterInactive(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Error returning record", http.StatusInternalServerError)
 		return
 	}
+
+	err = writeMapHeadToLog()
+	if err != nil {
+		http.Error(w, "Error writing map head to log", http.StatusInternalServerError)
+		return
+	}
+
 	w.Header().Set("Content-Type", "application/json")
 	w.Write(jsonData)
 }
@@ -324,5 +384,6 @@ func main() {
 	flag.Parse()
 	http.HandleFunc("/voter", voter)
 	http.HandleFunc("/voter/prove", proveMembership)
+	log.Printf("Server listening on port 8084")
 	log.Fatal(http.ListenAndServe("localhost:8084", nil))
 }
