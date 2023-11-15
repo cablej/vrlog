@@ -2,6 +2,8 @@
 
 VRLog provides a transparent record of voter registration data using transparency logs.
 
+Note that currently there is no authentication on this. In the future, authentication will be added to functions that modify the database. Election officials are expected to authenticate voters separately before modifying their record.
+
 ## Setup
 
 1. Download trillian version 1.3.12: `git clone https://github.com/google/trillian && git checkout 4e6e1221e01dd615e0286a5eeeaf6f974e354f6e`

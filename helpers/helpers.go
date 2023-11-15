@@ -89,6 +89,21 @@ func GetInclusionProof(tmc *trillian.TrillianMapClient, id int64, hash []byte) *
 	return resp
 }
 
+func GetAppendOnlyProof(tc *trillian.TrillianLogClient, id int64, treeSize int64) *trillian.GetLatestSignedLogRootResponse {
+	req := &trillian.GetLatestSignedLogRootRequest{
+		LogId:         id,
+		FirstTreeSize: treeSize,
+		ChargeTo:      nil,
+	}
+
+	resp, err := (*tc).GetLatestSignedLogRoot(context.Background(), req)
+	if err != nil {
+		log.Printf("Can't get latest signed root '%d': %v", treeSize, err)
+		return nil
+	}
+	return resp
+}
+
 func GetValue(tmc *trillian.TrillianMapClient, id int64, hash []byte) *string {
 	index := [1][]byte{hash}
 	req := &trillian.GetMapLeavesRequest{
@@ -174,7 +189,7 @@ func (i *LogInfo) SaveRecord(value interface{}, g *grpc.ClientConn) error {
 	return nil
 }
 
-// Helper function to convert fields into mapInfo struct
+// Helper function to convert fields into logInfo struct
 func NewLogInfo(tc trillian.TrillianLogClient, logID int64, ctx context.Context) *LogInfo {
 	i := &LogInfo{LogID: logID, Tc: tc, Ctx: ctx}
 	return i

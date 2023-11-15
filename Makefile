@@ -33,10 +33,8 @@ extract::
 tmserver::
 	cd $T && ./trillian_map_server --logtostderr --rpc_endpoint=localhost:8095
 
-createmap:: $R/mapid
-
-$R/mapid:
-	go run github.com/google/trillian/cmd/createtree --admin_server=localhost:8093  --tree_type=MAP --hash_strategy=TEST_MAP_HASHER  > $R/mapid
+createmap::
+	go run github.com/google/trillian/cmd/createtree --admin_server=localhost:8093  --tree_type=MAP --hash_strategy=TEST_MAP_HASHER  > mapid
 
 deletemap::
 	cd $T && go run cmd/deletetree/main.go --admin_server=localhost:8090 --log_id=`cat $R/mapid`

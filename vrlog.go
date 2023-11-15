@@ -368,6 +368,35 @@ func proveMembership(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func proveAppendOnly(w http.ResponseWriter, r *http.Request) {
+	_, tc, _, err := initTrillianMapLog()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	// convert to int
+
+	first_tree_size, err := strconv.Atoi(r.URL.Query().Get("first_tree_size"))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+
+	resp := helpers.GetAppendOnlyProof(tc, *mapLogID, int64(first_tree_size))
+	if resp == nil {
+		http.Error(w, "Record not found", http.StatusNotFound)
+		return
+	} else {
+		jsonData, err := json.Marshal(resp)
+		if err != nil {
+			http.Error(w, "Error returning record", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(jsonData)
+	}
+}
+
 // Returns all records from map
 func getVoters(w http.ResponseWriter, r *http.Request) {
 	var err error
@@ -429,6 +458,7 @@ func main() {
 	http.HandleFunc("/voter", voter)
 	http.HandleFunc("/voters", getVoters)
 	http.HandleFunc("/voter/prove", proveMembership)
+	http.HandleFunc("/proveAppendOnly", proveAppendOnly)
 	log.Printf("Server listening on port 8084")
 	log.Fatal(http.ListenAndServe("localhost:8084", nil))
 }
