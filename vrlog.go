@@ -11,6 +11,7 @@ import (
 	"io/ioutil"
 	"log"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
@@ -117,12 +118,12 @@ func computeHmac(key string, data string) string {
 	return hex.EncodeToString(h.Sum(nil))
 }
 
-func hashVoter(voter map[string]string) map[string]string {
+func hashVoter(voter map[string]string, r_id string) map[string]string {
 	// TODO: consider storing as byte array rather than JSON for space reasons
 	hashedVoter := make(map[string]string)
 	for _, field := range fields {
 		// Unique salt per field, per voter
-		salt := computeHmac(*saltKey, fmt.Sprintf("%s|%s", voter["id"], field))
+		salt := computeHmac(*saltKey, fmt.Sprintf("%s|%s", r_id, field))
 		val := voter[field]
 		hashedVoter[field] = hex.EncodeToString(helpers.Hash(fmt.Sprintf("%s|%s", val, salt)))
 	}
@@ -205,7 +206,7 @@ func addVoter(w http.ResponseWriter, r *http.Request) {
 	defer gMap.Close()
 
 	r_id := computeHmac(*idKey, voter["id"])
-	hashed := hashVoter(voter)
+	hashed := hashVoter(voter, r_id)
 	existingVoter := helpers.GetValue(tmc, *mapID, helpers.Hash(r_id))
 	meta, error := parseAndUpdateMetadata(existingVoter, r_id, HistoryItem{
 		Date:      time.Now(),
@@ -313,6 +314,7 @@ func makeVoterInactive(w http.ResponseWriter, r *http.Request) {
 
 	err = logInfo.SaveRecord(voterParsed, gLog)
 	if err != nil {
+
 		http.Error(w, "Error saving record", http.StatusInternalServerError)
 		return
 	}
@@ -366,6 +368,49 @@ func proveMembership(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+// Returns all records from map
+func getVoters(w http.ResponseWriter, r *http.Request) {
+	var err error
+
+	s := r.URL.Query().Get("page_size")
+	size := 100
+	if s != "" {
+		size, err = strconv.Atoi(s)
+		if err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+	}
+	i := r.URL.Query().Get("page_index")
+	start := 0
+	if i != "" {
+		start, err = strconv.Atoi(i)
+		if err != nil || start < 1 {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+		// Start at 1
+		start = (start - 1) * size
+	}
+
+	// io.WriteString(w, "{")
+	// for n := start; n < start+size; n++ {
+	// 	resp := records.GetValue(tmc, *mapID, records.KeyHash(n))
+	// 	if resp == nil {
+	// 		break
+	// 	}
+	// 	resp = records.GetValue(tmc, *mapID, records.RecordHash(*resp))
+	// 	// FIXME: not formatted exactly like GDS registers...
+	// 	//fmt.Fprintf(w, "%s\n", *resp)
+	// 	r, k := fixRecord(*resp)
+	// 	if n != start {
+	// 		io.WriteString(w, ",")
+	// 	}
+	// 	fmt.Fprintf(w, "\"%s\":%s", k, r)
+	// }
+	// io.WriteString(w, "}")
+}
+
 func voter(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case "GET":
@@ -382,6 +427,7 @@ func voter(w http.ResponseWriter, r *http.Request) {
 func main() {
 	flag.Parse()
 	http.HandleFunc("/voter", voter)
+	http.HandleFunc("/voters", getVoters)
 	http.HandleFunc("/voter/prove", proveMembership)
 	log.Printf("Server listening on port 8084")
 	log.Fatal(http.ListenAndServe("localhost:8084", nil))

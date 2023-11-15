@@ -14,15 +14,11 @@ tlserver::
 tlsigner::
 	cd $T && ./trillian_log_signer --logtostderr --force_master --http_endpoint=localhost:8092 --rpc_endpoint=localhost:8193 --batch_size=1000 --sequencer_guard_window=0 --sequencer_interval=200ms
 
-createlog:: $R/logid
+createlog::
+	go run github.com/google/trillian/cmd/createtree --admin_server=localhost:8090 > logid
 
-$R/logid:
-	go run github.com/google/trillian/cmd/createtree --admin_server=localhost:8090 > $R/logid
-
-createmaplog:: $R/maplogid
-
-$R/maplogid:
-	go run github.com/google/trillian/cmd/createtree --admin_server=localhost:8090 > $R/maplogid
+createmaplog::
+	go run github.com/google/trillian/cmd/createtree --admin_server=localhost:8090 > maplogid
 
 deletelog::
 	cd $T && go run cmd/deletetree/main.go --admin_server=localhost:8090 --log_id=`cat $R/logid`
