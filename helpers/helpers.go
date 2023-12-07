@@ -12,7 +12,10 @@ import (
 	"log"
 
 	"github.com/google/trillian"
+	"github.com/google/trillian/client"
 	"github.com/google/trillian/crypto"
+	"github.com/google/trillian/merkle/rfc6962"
+	"github.com/google/trillian/types"
 	"google.golang.org/grpc"
 	"google.golang.org/grpc/codes"
 )
@@ -102,6 +105,20 @@ func GetAppendOnlyProof(tc *trillian.TrillianLogClient, id int64, treeSize int64
 		return nil
 	}
 	return resp
+}
+
+func VerifyAppendOnlyProof(tc *trillian.TrillianLogClient, pubKey gocrypto.PublicKey, signed_log_root *trillian.SignedLogRoot) (*types.LogRootV1, error) {
+	verifier := client.NewLogVerifier(rfc6962.DefaultHasher, pubKey, gocrypto.SHA256)
+	root, err := crypto.VerifySignedLogRoot(verifier.PubKey, verifier.SigHash, signed_log_root)
+	if err == nil {
+		// Signature verified and unmarshalled correctly. The struct may now
+		// be used.
+		// if root.TreeSize > 0 {
+		// 	// Non empty tree.
+		// }
+		return root, nil
+	}
+	return nil, err
 }
 
 func GetValue(tmc *trillian.TrillianMapClient, id int64, hash []byte) *string {

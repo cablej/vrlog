@@ -397,6 +397,46 @@ func proveAppendOnly(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func verifyAppendOnly(w http.ResponseWriter, r *http.Request) {
+	g, tc, _, err := initTrillianMapLog()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	pubKey, err := helpers.GetKey(g, *mapLogID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	var appendOnlyProof trillian.SignedLogRoot
+	body, err := ioutil.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	err = json.Unmarshal(body, &appendOnlyProof)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	resp, err := helpers.VerifyAppendOnlyProof(tc, pubKey, &appendOnlyProof)
+	if resp == nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	} else {
+		jsonData, err := json.Marshal(resp)
+		if err != nil {
+			http.Error(w, "Error returning record", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(jsonData)
+	}
+}
+
 // Returns all records from map
 func getVoters(w http.ResponseWriter, r *http.Request) {
 	var err error
@@ -458,7 +498,9 @@ func main() {
 	http.HandleFunc("/voter", voter)
 	http.HandleFunc("/voters", getVoters)
 	http.HandleFunc("/voter/prove", proveMembership)
+	// http.HandleFunc("/voter/verify", verifyMembership)
 	http.HandleFunc("/proveAppendOnly", proveAppendOnly)
+	http.HandleFunc("/verifyAppendOnly", verifyAppendOnly)
 	log.Printf("Server listening on port 8084")
 	log.Fatal(http.ListenAndServe("localhost:8084", nil))
 }
