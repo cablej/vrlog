@@ -491,8 +491,7 @@ func proveAppendOnly(w http.ResponseWriter, r *http.Request) {
 map is append only, if a voter's record was change this would not detect it. Instead, the voter's records based on the log should be verified.
 */
 func verifyAppendOnly(w http.ResponseWriter, r *http.Request) {
-
-	g, tmc, mapInfo, err := initTrillianMap()
+	_, tmc, mapInfo, err := initTrillianMap()
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
