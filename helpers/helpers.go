@@ -110,6 +110,30 @@ func GetAppendOnlyProof(tc *trillian.TrillianLogClient, id int64, treeSize int64
 	return resp
 }
 
+func (i *MapInfo) GetMapAppendOnlyProof() (*trillian.GetSignedMapRootResponse, error) {
+	signedMapRootResp, err := i.Tc.GetSignedMapRoot(i.Ctx, &trillian.GetSignedMapRootRequest{
+		MapId: i.MapID,
+	})
+	if err != nil {
+		log.Printf("Failed to get signed map root: %v", err)
+		return nil, err
+	}
+	return signedMapRootResp, nil
+}
+
+func (i *MapInfo) VerifyMapAppendOnlyProof(g *grpc.ClientConn, mapRoot *trillian.SignedMapRoot) (*types.MapRootV1, error) {
+	pubKey, err := GetKey(g, i.MapID)
+	if err != nil {
+		return nil, err
+	}
+
+	root, err := crypto.VerifySignedMapRoot(pubKey, gocrypto.SHA256, mapRoot)
+	if err != nil {
+		return nil, err
+	}
+	return root, nil
+}
+
 func VerifyAppendOnlyProof(tc *trillian.TrillianLogClient, pubKey gocrypto.PublicKey, signed_log_root *trillian.SignedLogRoot) (*types.LogRootV1, error) {
 	verifier := client.NewLogVerifier(rfc6962.DefaultHasher, pubKey, gocrypto.SHA256)
 	root, err := crypto.VerifySignedLogRoot(verifier.PubKey, verifier.SigHash, signed_log_root)

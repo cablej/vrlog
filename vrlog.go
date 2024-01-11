@@ -1,8 +1,8 @@
 package main
 
 import (
+	"bytes"
 	"context"
-	gocrypto "crypto"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
@@ -20,7 +20,6 @@ import (
 	"github.com/google/trillian"
 	"github.com/google/trillian/merkle/maphasher"
 
-	"github.com/google/trillian/crypto"
 	"github.com/google/trillian/merkle/mapverifier"
 	"google.golang.org/grpc"
 )
@@ -49,9 +48,11 @@ type HistoryItem struct {
 	Signer    string    `json:"signer"`
 }
 
-type AppendOnlyBody struct {
-	AppendOnlyProof trillian.SignedLogRoot `json:"signed_log_root"`
-	Version         int64                  `json:"version"`
+type AppendOnlyProof struct {
+	MapProof    trillian.GetSignedMapRootResponse       `json:"map_proof"`
+	LogProof    trillian.GetLatestSignedLogRootResponse `json:"log_proof"`
+	MapLogProof trillian.GetLatestSignedLogRootResponse `json:"map_log_proof"`
+	Version     int64                                   `json:"version"`
 }
 
 func initTrillianMap() (*grpc.ClientConn, *trillian.TrillianMapClient, *helpers.MapInfo, error) {
@@ -380,7 +381,7 @@ func proveMembership(w http.ResponseWriter, r *http.Request) {
 func verifyMembership(w http.ResponseWriter, r *http.Request) {
 	// Verify inclusion proof from proveMembership
 
-	g, _, _, err := initTrillianMap()
+	g, _, mapInfo, err := initTrillianMap()
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -398,13 +399,7 @@ func verifyMembership(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	pubKey, err := helpers.GetKey(g, *mapID)
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
-
-	root, err := crypto.VerifySignedMapRoot(pubKey, gocrypto.SHA256, inclusionProof.MapRoot)
+	root, err := mapInfo.VerifyMapAppendOnlyProof(g, inclusionProof.MapRoot)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -428,36 +423,88 @@ func verifyMembership(w http.ResponseWriter, r *http.Request) {
 }
 
 func proveAppendOnly(w http.ResponseWriter, r *http.Request) {
+	gMap, _, mapInfo, err := initTrillianMap()
+	if err != nil {
+		log.Fatalf("Failed to init Trillian Map: %v", err)
+	}
+	defer gMap.Close()
+
 	_, tc, _, err := initTrillianMapLog()
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	// convert to int
 
+	_, tc2, _, err := initTrillianLog()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// convert to int
 	first_tree_size, err := strconv.Atoi(r.URL.Query().Get("first_tree_size"))
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusBadRequest)
 		return
 	}
 
-	resp := helpers.GetAppendOnlyProof(tc, *mapLogID, int64(first_tree_size))
-	if resp == nil {
-		http.Error(w, "Record not found", http.StatusNotFound)
+	mapAppendOnlyProof, err := mapInfo.GetMapAppendOnlyProof()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
-	} else {
-		jsonData, err := json.Marshal(resp)
-		if err != nil {
-			http.Error(w, "Error returning record", http.StatusInternalServerError)
-			return
-		}
-		w.Header().Set("Content-Type", "application/json")
-		w.Write(jsonData)
 	}
+
+	mapLogProof := helpers.GetAppendOnlyProof(tc, *mapLogID, int64(first_tree_size))
+	if mapLogProof == nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	logProof := helpers.GetAppendOnlyProof(tc2, *logID, int64(first_tree_size))
+	if logProof == nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	resp := AppendOnlyProof{
+		MapProof:    *mapAppendOnlyProof,
+		LogProof:    *logProof,
+		MapLogProof: *mapLogProof,
+		Version:     int64(first_tree_size),
+	}
+
+	jsonData, err := json.Marshal(resp)
+	if err != nil {
+		http.Error(w, "Error returning record", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Write(jsonData)
 }
 
+/*
+1. Verify that map log is append only.
+2. Verify map is append only.
+3. Verify log is append only.
+4. Verify latest entry in map log matches root of map.
+5. Verify latest version of all voters in log map version in map -- note: as this only verifies if the
+map is append only, if a voter's record was change this would not detect it. Instead, the voter's records based on the log should be verified.
+*/
 func verifyAppendOnly(w http.ResponseWriter, r *http.Request) {
+
+	g, tmc, mapInfo, err := initTrillianMap()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
 	g, tc, _, err := initTrillianMapLog()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	_, tc2, _, err := initTrillianLog()
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -469,35 +516,108 @@ func verifyAppendOnly(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var bodyJSON AppendOnlyBody
+	pubKey2, err := helpers.GetKey(g, *logID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	var appendOnlyProof AppendOnlyProof
 	body, err := ioutil.ReadAll(r.Body)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	err = json.Unmarshal(body, &bodyJSON)
+	err = json.Unmarshal(body, &appendOnlyProof)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	resp, err := helpers.VerifyAppendOnlyProof(tc, pubKey, &bodyJSON.AppendOnlyProof)
-	if resp == nil {
+	// Verify map log is append only
+	_, err = helpers.VerifyAppendOnlyProof(tc, pubKey, appendOnlyProof.MapLogProof.SignedLogRoot)
+	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
-	} else {
-		jsonData, err := json.Marshal(resp)
+	}
+
+	// Verify map is append only
+	_, err = mapInfo.VerifyMapAppendOnlyProof(g, appendOnlyProof.MapProof.MapRoot)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Verify log is append only
+	_, err = helpers.VerifyAppendOnlyProof(tc2, pubKey2, appendOnlyProof.LogProof.SignedLogRoot)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	// Verified log is append only, now check that latest entry in map log matches root of map
+	mapLogLeaves, err := (*tc).GetLeavesByRange(context.Background(), &trillian.GetLeavesByRangeRequest{LogId: *mapLogID, StartIndex: appendOnlyProof.Version, Count: 999999999, ChargeTo: nil})
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	leaf := mapLogLeaves.Leaves[len(mapLogLeaves.Leaves)-1]
+	var mapRoot *trillian.SignedMapRoot
+	err = json.Unmarshal(leaf.LeafValue, &mapRoot)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if !bytes.Equal(mapRoot.MapRoot, appendOnlyProof.MapProof.MapRoot.MapRoot) {
+		http.Error(w, fmt.Sprintf("Map log %s does not match map root %s", mapRoot.MapRoot, &appendOnlyProof.MapProof.MapRoot.MapRoot), http.StatusInternalServerError)
+		return
+	}
+
+	// Verified log is append only, now check each record starting at bodyJSON.version to ensure it is valid
+	logLeaves, err := (*tc2).GetLeavesByRange(context.Background(), &trillian.GetLeavesByRangeRequest{LogId: *logID, StartIndex: appendOnlyProof.Version, Count: 999999999, ChargeTo: nil})
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	verifiedVoters := make(map[string]bool)
+
+	for i := range logLeaves.Leaves {
+		// Iterate leaves backwards
+		leaf := logLeaves.Leaves[len(logLeaves.Leaves)-1-i]
+		var voter map[string]string
+		err = json.Unmarshal(leaf.LeafValue, &voter)
 		if err != nil {
-			http.Error(w, "Error returning record", http.StatusInternalServerError)
+			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 
-		// Verified log is append only, now check each record starting at bodyJSON.version to ensure it is valid
+		// Only verify the current record is valid
+		if _, hasVerified := verifiedVoters[voter["public_id"]]; hasVerified {
+			continue
+		}
 
-		w.Header().Set("Content-Type", "application/json")
-		w.Write(jsonData)
+		// Get voter's record in the map
+		record := helpers.GetValue(tmc, *mapID, helpers.Hash(voter["public_id"]))
+
+		if *record != string(leaf.LeafValue) {
+			http.Error(w, fmt.Sprintf("Map record %v does not match log value %v", *record, string(leaf.LeafValue)), http.StatusInternalServerError)
+			return
+		}
+		verifiedVoters[voter["public_id"]] = true
 	}
+
+	jsonData, err := json.Marshal(map[string]interface{}{
+		"status": "success",
+	})
+	if err != nil {
+		http.Error(w, "Error returning record", http.StatusInternalServerError)
+		return
+	}
+	w.Header().Set("Content-Type", "application/json")
+	w.Write(jsonData)
 }
 
 // Returns all records from map
