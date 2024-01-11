@@ -13,8 +13,9 @@ Note that currently there is no authentication on this. In the future, authentic
 
 ## Running
 
-1. Run `make mapper` to start the server.
-2. Navigate to `http://localhost:8084`
+1. Run `go get github.com/google/trillian@4e6e1221e01dd615e0286a5eeeaf6f974e354f6e`
+2. Run `make mapper` to start the server.
+3. Navigate to `http://localhost:8084`
 
 ## API
 
@@ -39,3 +40,15 @@ Marks the voter registration as inactive given the public id.
 #### `GET /voter/prove?id=id`
 
 Returns the membership proof for the given public id.
+
+#### `POST /voter/verify`
+
+Verifies the supplied membership proof.
+
+#### `GET /voter/proveAppendOnly?first_tree_size=size`
+
+Proves that the log is append only up to the specified first size.
+
+#### `POST /voter/verifyAppendOnly`
+
+Verifies that the log is append only up to the specified first size.

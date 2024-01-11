@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	gocrypto "crypto"
 	"crypto/hmac"
 	"crypto/sha256"
 	"encoding/hex"
@@ -17,6 +18,10 @@ import (
 
 	"github.com/cablej/vrlog/helpers"
 	"github.com/google/trillian"
+	"github.com/google/trillian/merkle/maphasher"
+
+	"github.com/google/trillian/crypto"
+	"github.com/google/trillian/merkle/mapverifier"
 	"google.golang.org/grpc"
 )
 
@@ -42,6 +47,11 @@ type HistoryItem struct {
 	EventType string    `json:"eventType"`
 	Signature string    `json:"signature"`
 	Signer    string    `json:"signer"`
+}
+
+type AppendOnlyBody struct {
+	AppendOnlyProof trillian.SignedLogRoot `json:"signed_log_root"`
+	Version         int64                  `json:"version"`
 }
 
 func initTrillianMap() (*grpc.ClientConn, *trillian.TrillianMapClient, *helpers.MapInfo, error) {
@@ -314,7 +324,6 @@ func makeVoterInactive(w http.ResponseWriter, r *http.Request) {
 
 	err = logInfo.SaveRecord(voterParsed, gLog)
 	if err != nil {
-
 		http.Error(w, "Error saving record", http.StatusInternalServerError)
 		return
 	}
@@ -368,6 +377,56 @@ func proveMembership(w http.ResponseWriter, r *http.Request) {
 	}
 }
 
+func verifyMembership(w http.ResponseWriter, r *http.Request) {
+	// Verify inclusion proof from proveMembership
+
+	g, _, _, err := initTrillianMap()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	var inclusionProof trillian.GetMapLeavesResponse
+	body, err := ioutil.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	err = json.Unmarshal(body, &inclusionProof)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	pubKey, err := helpers.GetKey(g, *mapID)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	root, err := crypto.VerifySignedMapRoot(pubKey, gocrypto.SHA256, inclusionProof.MapRoot)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	err = mapverifier.VerifyInclusionProof(*mapID, inclusionProof.MapLeafInclusion[0].Leaf, root.RootHash, inclusionProof.MapLeafInclusion[0].Inclusion, maphasher.Default)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	} else {
+		jsonData, err := json.Marshal(map[string]interface{}{
+			"status": "success",
+		})
+		if err != nil {
+			http.Error(w, "Error returning record", http.StatusInternalServerError)
+			return
+		}
+		w.Header().Set("Content-Type", "application/json")
+		w.Write(jsonData)
+	}
+}
+
 func proveAppendOnly(w http.ResponseWriter, r *http.Request) {
 	_, tc, _, err := initTrillianMapLog()
 	if err != nil {
@@ -410,19 +469,20 @@ func verifyAppendOnly(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	var appendOnlyProof trillian.SignedLogRoot
+	var bodyJSON AppendOnlyBody
 	body, err := ioutil.ReadAll(r.Body)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
-	err = json.Unmarshal(body, &appendOnlyProof)
+
+	err = json.Unmarshal(body, &bodyJSON)
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
-	resp, err := helpers.VerifyAppendOnlyProof(tc, pubKey, &appendOnlyProof)
+	resp, err := helpers.VerifyAppendOnlyProof(tc, pubKey, &bodyJSON.AppendOnlyProof)
 	if resp == nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
@@ -432,6 +492,9 @@ func verifyAppendOnly(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Error returning record", http.StatusInternalServerError)
 			return
 		}
+
+		// Verified log is append only, now check each record starting at bodyJSON.version to ensure it is valid
+
 		w.Header().Set("Content-Type", "application/json")
 		w.Write(jsonData)
 	}
@@ -498,7 +561,7 @@ func main() {
 	http.HandleFunc("/voter", voter)
 	http.HandleFunc("/voters", getVoters)
 	http.HandleFunc("/voter/prove", proveMembership)
-	// http.HandleFunc("/voter/verify", verifyMembership)
+	http.HandleFunc("/voter/verify", verifyMembership)
 	http.HandleFunc("/proveAppendOnly", proveAppendOnly)
 	http.HandleFunc("/verifyAppendOnly", verifyAppendOnly)
 	log.Printf("Server listening on port 8084")

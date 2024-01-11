@@ -3,7 +3,7 @@ module github.com/cablej/vrlog
 go 1.17
 
 require (
-	github.com/google/trillian v1.3.12-0.20210114154553-c92fa63aaa6c
+	github.com/google/trillian v1.3.12
 	google.golang.org/grpc v1.29.1
 )
 

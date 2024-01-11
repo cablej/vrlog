@@ -187,6 +187,8 @@ github.com/google/pprof v0.0.0-20200507031123-427632fa3b1c/go.mod h1:ZgVRPoUq/hf
 github.com/google/renameio v0.1.0/go.mod h1:KWCgfxg9yswjAJkECMjeO8J8rahYeXnNhOm40UhjYkI=
 github.com/google/trillian v1.3.12-0.20210114154553-c92fa63aaa6c h1:uOBp84qJ1qL5VMpmugBk+NE6WATBkIlMvfKYXXEmz5Y=
 github.com/google/trillian v1.3.12-0.20210114154553-c92fa63aaa6c/go.mod h1:NGtgsTbdz6KnkoUbULx/jk3LMFAqyXtudeAls4vG5H8=
+github.com/google/trillian v1.3.12 h1:PIXDRUxblxeXJjNdkXJF5SWL3ZRZoWHbVW7osmzJODo=
+github.com/google/trillian v1.3.12/go.mod h1:8y3zC8XuqFxsslWPkP0r3sprERfFf7hCWmicL0yHZNI=
 github.com/google/uuid v0.0.0-20161128191214-064e2069ce9c/go.mod h1:TIyPZe4MgqvfeYDBFedMoGGpEw/LqOeaOT+nhxU+yHo=
 github.com/google/uuid v1.0.0/go.mod h1:TIyPZe4MgqvfeYDBFedMoGGpEw/LqOeaOT+nhxU+yHo=
 github.com/google/uuid v1.1.1/go.mod h1:TIyPZe4MgqvfeYDBFedMoGGpEw/LqOeaOT+nhxU+yHo=
@@ -409,6 +411,7 @@ go.etcd.io/bbolt v1.3.3/go.mod h1:IbVyRI1SCnLcuJnV2u8VeU0CEYM7e686BmAb1XKL+uU=
 go.etcd.io/bbolt v1.3.4/go.mod h1:G5EMThwa9y8QZGBClrRx5EY+Yw9kAhnjy3bSjsnlVTQ=
 go.etcd.io/etcd v0.0.0-20191023171146-3cf2f69b5738/go.mod h1:dnLIgRNXwCJa5e+c6mIZCrds/GIG4ncV9HhK5PX7jPg=
 go.etcd.io/etcd v0.0.0-20200513171258-e048e166ab9c/go.mod h1:xCI7ZzBfRuGgBXyXO6yfWfDmlWd35khcWpUa4L0xI/k=
+go.etcd.io/etcd v0.5.0-alpha.5.0.20200819165624-17cef6e3e9d5/go.mod h1:skWido08r9w6Lq/w70DO5XYIKMu4QFu1+4VsqLQuJy8=
 go.opencensus.io v0.20.1/go.mod h1:6WKK9ahsWS3RSO+PY9ZHZUfv2irvY6gN279GOPZjmmk=
 go.opencensus.io v0.20.2/go.mod h1:6WKK9ahsWS3RSO+PY9ZHZUfv2irvY6gN279GOPZjmmk=
 go.opencensus.io v0.21.0/go.mod h1:mSImk1erAIZhrmZN+AvHh14ztQfjbGwt4TtuofqLduU=
