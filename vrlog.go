@@ -33,6 +33,7 @@ var (
 	idKey       = flag.String("id_key", "secret1", "Key to use to generate ids.")
 	saltKey     = flag.String("salt_key", "secret2", "Key used to generate salts.")
 	fieldsStr   = flag.String("fields", "id,firstName,lastName,dob,ssn", "Comma-separated list of fields to include in the voter record.")
+	debugMode   = flag.Bool("debug", false, "Debug mode (request timing)")
 	fields      = strings.Split(*fieldsStr, ",")
 )
 
@@ -90,6 +91,12 @@ func initTrillianMapLog() (*grpc.ClientConn, *trillian.TrillianLogClient, *helpe
 	info := helpers.NewLogInfo(tc, *mapLogID, context.Background())
 
 	return g, &tc, info, nil
+}
+
+func sendHTTPResponse(w http.ResponseWriter, startTime time.Time, resp []byte) {
+	w.Header().Set("Content-Type", "application/json")
+	w.Header().Set("Response-Time", fmt.Sprintf("%d", int64(time.Since(startTime)/time.Millisecond)))
+	w.Write(resp)
 }
 
 func writeMapHeadToLog() error {
@@ -181,6 +188,8 @@ func parseAndUpdateMetadata(existingVoter *string, r_id string, historyItem Hist
 }
 
 func addVoter(w http.ResponseWriter, r *http.Request) {
+	startTime := time.Now()
+
 	var voter map[string]string
 	body, err := ioutil.ReadAll(r.Body)
 	if err != nil {
@@ -259,11 +268,11 @@ func addVoter(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.Write(jsonData)
+	sendHTTPResponse(w, startTime, jsonData)
 }
 
 func getVoter(w http.ResponseWriter, r *http.Request) {
+	startTime := time.Now()
 	id := r.URL.Query().Get("id")
 
 	_, tmc, _, err := initTrillianMap()
@@ -277,12 +286,12 @@ func getVoter(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Record not found", http.StatusNotFound)
 		return
 	} else {
-		w.Header().Set("Content-Type", "application/json")
-		w.Write([]byte(*resp))
+		sendHTTPResponse(w, startTime, []byte(*resp))
 	}
 }
 
 func makeVoterInactive(w http.ResponseWriter, r *http.Request) {
+	startTime := time.Now()
 	id := r.URL.Query().Get("id")
 
 	gLog, _, logInfo, err := initTrillianLog()
@@ -350,11 +359,11 @@ func makeVoterInactive(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	w.Header().Set("Content-Type", "application/json")
-	w.Write(jsonData)
+	sendHTTPResponse(w, startTime, jsonData)
 }
 
 func proveMembership(w http.ResponseWriter, r *http.Request) {
+	startTime := time.Now()
 	id := r.URL.Query().Get("id")
 
 	_, tmc, _, err := initTrillianMap()
@@ -373,12 +382,12 @@ func proveMembership(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Error returning record", http.StatusInternalServerError)
 			return
 		}
-		w.Header().Set("Content-Type", "application/json")
-		w.Write(jsonData)
+		sendHTTPResponse(w, startTime, jsonData)
 	}
 }
 
 func verifyMembership(w http.ResponseWriter, r *http.Request) {
+	startTime := time.Now()
 	// Verify inclusion proof from proveMembership
 
 	g, _, mapInfo, err := initTrillianMap()
@@ -417,12 +426,12 @@ func verifyMembership(w http.ResponseWriter, r *http.Request) {
 			http.Error(w, "Error returning record", http.StatusInternalServerError)
 			return
 		}
-		w.Header().Set("Content-Type", "application/json")
-		w.Write(jsonData)
+		sendHTTPResponse(w, startTime, jsonData)
 	}
 }
 
 func proveAppendOnly(w http.ResponseWriter, r *http.Request) {
+	startTime := time.Now()
 	gMap, _, mapInfo, err := initTrillianMap()
 	if err != nil {
 		log.Fatalf("Failed to init Trillian Map: %v", err)
@@ -478,8 +487,7 @@ func proveAppendOnly(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Error returning record", http.StatusInternalServerError)
 		return
 	}
-	w.Header().Set("Content-Type", "application/json")
-	w.Write(jsonData)
+	sendHTTPResponse(w, startTime, jsonData)
 }
 
 /*
@@ -491,6 +499,7 @@ func proveAppendOnly(w http.ResponseWriter, r *http.Request) {
 map is append only, if a voter's record was change this would not detect it. Instead, the voter's records based on the log should be verified.
 */
 func verifyAppendOnly(w http.ResponseWriter, r *http.Request) {
+	startTime := time.Now()
 	_, tmc, mapInfo, err := initTrillianMap()
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
@@ -615,8 +624,7 @@ func verifyAppendOnly(w http.ResponseWriter, r *http.Request) {
 		http.Error(w, "Error returning record", http.StatusInternalServerError)
 		return
 	}
-	w.Header().Set("Content-Type", "application/json")
-	w.Write(jsonData)
+	sendHTTPResponse(w, startTime, jsonData)
 }
 
 // Returns all records from map
@@ -662,6 +670,24 @@ func getVoters(w http.ResponseWriter, r *http.Request) {
 	// io.WriteString(w, "}")
 }
 
+func getVersion(w http.ResponseWriter, r *http.Request) {
+	startTime := time.Now()
+	gMap, _, mapInfo, _ := initTrillianMap()
+	revision, err := helpers.GetRevision(mapInfo, gMap)
+	if err != nil {
+		http.Error(w, "Error returning version", http.StatusInternalServerError)
+		return
+	}
+	jsonData, err := json.Marshal(map[string]interface{}{
+		"version": revision,
+	})
+	if err != nil {
+		http.Error(w, "Error returning version", http.StatusInternalServerError)
+		return
+	}
+	sendHTTPResponse(w, startTime, jsonData)
+}
+
 func voter(w http.ResponseWriter, r *http.Request) {
 	switch r.Method {
 	case "GET":
@@ -677,6 +703,7 @@ func voter(w http.ResponseWriter, r *http.Request) {
 
 func main() {
 	flag.Parse()
+	http.HandleFunc("/version", getVersion)
 	http.HandleFunc("/voter", voter)
 	http.HandleFunc("/voters", getVoters)
 	http.HandleFunc("/voter/prove", proveMembership)
@@ -684,5 +711,5 @@ func main() {
 	http.HandleFunc("/proveAppendOnly", proveAppendOnly)
 	http.HandleFunc("/verifyAppendOnly", verifyAppendOnly)
 	log.Printf("Server listening on port 8084")
-	log.Fatal(http.ListenAndServe("localhost:8084", nil))
+	log.Fatal(http.ListenAndServe("0.0.0.0:8084", nil))
 }
