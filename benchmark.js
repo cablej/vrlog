@@ -1,36 +1,47 @@
 var axios = require("axios");
+var exec = require("child_process").exec;
 
-const host = "http://54.201.124.77:8084/";
+const host = "http://localhost:8085/";
 
-function printTimes(times, name) {
+function printTimes(start, upTo, batchSize, times, type) {
   if (times.length > 0) {
-    console.log("Operation: " + name);
     console.log(
-      "Average time: " + times.reduce((a, b) => a + b) / times.length
+      type +
+        ", " +
+        start +
+        ", " +
+        upTo +
+        ", " +
+        times.reduce((a, b) => a + b) / times.length +
+        ", " +
+        times.reduce((a, b) => a + b)
     );
-    console.log("Total time: " + times.reduce((a, b) => a + b));
   }
 }
 
-async function testAddVoter(upTo) {
-  resp = await axios.get(host + "version");
-  version = parseInt(resp.data.version);
+async function testAddVoter(start, upTo, batchSize) {
+  console.error("Adding voter " + String(start));
   times = {
     addVoter: [],
     getVoter: [],
     membershipProof: [],
     verifyMembership: []
   };
-  while (version < upTo) {
-    version++;
+  while (start < upTo) {
+    newVersion = start + batchSize;
+    if (newVersion > upTo) newVersion = upTo;
     body = {
-      firstName: "Test",
-      lastName: "Test",
-      ssn: "1234",
-      id: version.toString(),
-      status: "active"
+      start_id: start,
+      end_id: newVersion,
+      voter: {
+        firstName: "Test",
+        lastName: "Test",
+        ssn: "1234",
+        status: "active"
+      }
     };
-    resp = await axios.post(host + "voter", body);
+    start = newVersion;
+    resp = await axios.post(host + "batchVoter", body);
     times["addVoter"].push(parseInt(resp.headers["response-time"]));
 
     id = resp.data.id;
@@ -47,11 +58,12 @@ async function testAddVoter(upTo) {
     times["verifyMembership"].push(parseInt(resp.headers["response-time"]));
   }
   for (var type in times) {
-    printTimes(times[type], type + " up to " + upTo.toString());
+    printTimes(start, upTo, batchSize, times[type], type);
   }
 }
 
-async function testVerifyAppendOnly() {
+async function testVerifyAppendOnly(start, upTo, count) {
+  console.error("Verifying append only " + String(start));
   resp = await axios.get(host + "version");
   version = parseInt(resp.data.version);
   times = {
@@ -59,21 +71,33 @@ async function testVerifyAppendOnly() {
     verifyAppendOnly: []
   };
 
-  firstSize = 0;
-  resp = await axios.get(host + "proveAppendOnly?first_tree_size=" + firstSize);
+  resp = await axios.get(
+    host + "proveAppendOnly?first_tree_size=" + String(version - 1)
+  );
   times["proveAppendOnly"].push(parseInt(resp.headers["response-time"]));
 
   resp = await axios.post(host + "verifyAppendOnly", resp.data);
   times["verifyAppendOnly"].push(parseInt(resp.headers["response-time"]));
 
   for (var type in times) {
-    printTimes(times[type], type);
+    printTimes(start, upTo, count, times[type], type);
   }
 }
 
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
 async function testSuite() {
-  await testAddVoter(80);
-  await testVerifyAppendOnly();
+  start = 0;
+  max = start + 100000;
+  count = 2500;
+  while (true) {
+    console.error("Starting " + String(start));
+    await testAddVoter(start, max, count);
+    await sleep(60 * 1000);
+    await testVerifyAppendOnly(start, max, count);
+    start = max;
+    max += 100000;
+  }
 }
 
 testSuite();

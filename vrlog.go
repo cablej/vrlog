@@ -33,7 +33,7 @@ var (
 	idKey       = flag.String("id_key", "secret1", "Key to use to generate ids.")
 	saltKey     = flag.String("salt_key", "secret2", "Key used to generate salts.")
 	fieldsStr   = flag.String("fields", "id,firstName,lastName,dob,ssn", "Comma-separated list of fields to include in the voter record.")
-	debugMode   = flag.Bool("debug", false, "Debug mode (request timing)")
+	testMode    = flag.Bool("testMode", false, "Test mode (enables batch voter API for testing, disable in production)")
 	fields      = strings.Split(*fieldsStr, ",")
 )
 
@@ -54,6 +54,12 @@ type AppendOnlyProof struct {
 	LogProof    trillian.GetLatestSignedLogRootResponse `json:"log_proof"`
 	MapLogProof trillian.GetLatestSignedLogRootResponse `json:"map_log_proof"`
 	Version     int64                                   `json:"version"`
+}
+
+type BatchVoterRequest struct {
+	StartId int               `json:"start_id"`
+	EndId   int               `json:"end_id"`
+	Voter   map[string]string `json:"voter"`
 }
 
 func initTrillianMap() (*grpc.ClientConn, *trillian.TrillianMapClient, *helpers.MapInfo, error) {
@@ -94,8 +100,10 @@ func initTrillianMapLog() (*grpc.ClientConn, *trillian.TrillianLogClient, *helpe
 }
 
 func sendHTTPResponse(w http.ResponseWriter, startTime time.Time, resp []byte) {
-	w.Header().Set("Content-Type", "application/json")
-	w.Header().Set("Response-Time", fmt.Sprintf("%d", int64(time.Since(startTime)/time.Millisecond)))
+	if *testMode {
+		w.Header().Set("Content-Type", "application/json")
+		w.Header().Set("Response-Time", fmt.Sprintf("%d", int64(time.Since(startTime)/time.Millisecond)))
+	}
 	w.Write(resp)
 }
 
@@ -185,6 +193,85 @@ func parseAndUpdateMetadata(existingVoter *string, r_id string, historyItem Hist
 		return "", "Error marshalling metadata"
 	}
 	return string(jsonData)[:], ""
+}
+
+func batchVoter(w http.ResponseWriter, r *http.Request) {
+	startTime := time.Now()
+
+	var request BatchVoterRequest
+	body, err := ioutil.ReadAll(r.Body)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	err = json.Unmarshal(body, &request)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+
+	if _, ok := request.Voter["status"]; !ok {
+		http.Error(w, "status is required", http.StatusUnprocessableEntity)
+		return
+	}
+
+	gLog, _, logInfo, err := initTrillianLog()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	defer gLog.Close()
+
+	gMap, _, mapInfo, err := initTrillianMap()
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	defer gMap.Close()
+
+	var voters []map[string]string
+	for i := request.StartId; i < request.EndId; i++ {
+		request.Voter["id"] = fmt.Sprintf("%d", i)
+
+		r_id := computeHmac(*idKey, request.Voter["id"])
+		hashed := hashVoter(request.Voter, r_id)
+		meta, error := parseAndUpdateMetadata(nil, r_id, HistoryItem{
+			Date:      time.Now(),
+			EventType: "update",
+			Signature: "",
+			Signer:    "",
+		})
+		if error != "" {
+			http.Error(w, "Error: "+error, http.StatusInternalServerError)
+			return
+		}
+		hashed["metadata"] = meta
+		hashed["public_id"] = r_id
+		voters = append(voters, hashed)
+	}
+
+	err = logInfo.SaveRecordBulk(voters, gLog)
+	if err != nil {
+		http.Error(w, "Error saving record", http.StatusInternalServerError)
+		return
+	}
+
+	err = mapInfo.SaveRecordBulk(voters, gMap)
+	if err != nil {
+		http.Error(w, "Error saving record", http.StatusInternalServerError)
+		return
+	}
+
+	err = writeMapHeadToLog()
+	if err != nil {
+		http.Error(w, "Error writing map head to log", http.StatusInternalServerError)
+		return
+	}
+
+	jsonData, _ := json.Marshal(map[string]interface{}{
+		"id": voters[0]["public_id"],
+	})
+	sendHTTPResponse(w, startTime, jsonData)
 }
 
 func addVoter(w http.ResponseWriter, r *http.Request) {
@@ -571,6 +658,11 @@ func verifyAppendOnly(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	if len(mapLogLeaves.Leaves) == 0 {
+		http.Error(w, "Empty map log", http.StatusInternalServerError)
+		return
+	}
+
 	leaf := mapLogLeaves.Leaves[len(mapLogLeaves.Leaves)-1]
 	var mapRoot *trillian.SignedMapRoot
 	err = json.Unmarshal(leaf.LeafValue, &mapRoot)
@@ -583,38 +675,45 @@ func verifyAppendOnly(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Verified log is append only, now check each record starting at bodyJSON.version to ensure it is valid
-	logLeaves, err := (*tc2).GetLeavesByRange(context.Background(), &trillian.GetLeavesByRangeRequest{LogId: *logID, StartIndex: appendOnlyProof.Version, Count: 999999999, ChargeTo: nil})
-	if err != nil {
-		http.Error(w, err.Error(), http.StatusInternalServerError)
-		return
-	}
+	revision, err := helpers.GetRevision(mapInfo, g)
 
+	// TODO: Add consistent batching
+	batchSize := int64(500)
 	verifiedVoters := make(map[string]bool)
 
-	for i := range logLeaves.Leaves {
-		// Iterate leaves backwards
-		leaf := logLeaves.Leaves[len(logLeaves.Leaves)-1-i]
-		var voter map[string]string
-		err = json.Unmarshal(leaf.LeafValue, &voter)
+	for i := revision * 2500; i >= appendOnlyProof.Version*2500; i -= batchSize {
+		log.Printf("Verifying i= %d", i)
+		// Verified log is append only, now check each record starting at bodyJSON.version to ensure it is valid
+		logLeaves, err := (*tc2).GetLeavesByRange(context.Background(), &trillian.GetLeavesByRangeRequest{LogId: *logID, StartIndex: i, Count: batchSize, ChargeTo: nil})
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return
 		}
 
-		// Only verify the current record is valid
-		if _, hasVerified := verifiedVoters[voter["public_id"]]; hasVerified {
-			continue
-		}
+		for j := range logLeaves.Leaves {
+			// Iterate leaves backwards
+			leaf := logLeaves.Leaves[len(logLeaves.Leaves)-1-j]
+			var voter map[string]string
+			err = json.Unmarshal(leaf.LeafValue, &voter)
+			if err != nil {
+				http.Error(w, err.Error(), http.StatusInternalServerError)
+				return
+			}
 
-		// Get voter's record in the map
-		record := helpers.GetValue(tmc, *mapID, helpers.Hash(voter["public_id"]))
+			// Only verify the current record is valid
+			if _, hasVerified := verifiedVoters[voter["public_id"]]; hasVerified {
+				continue
+			}
 
-		if *record != string(leaf.LeafValue) {
-			http.Error(w, fmt.Sprintf("Map record %v does not match log value %v", *record, string(leaf.LeafValue)), http.StatusInternalServerError)
-			return
+			// Get voter's record in the map
+			record := helpers.GetValue(tmc, *mapID, helpers.Hash(voter["public_id"]))
+
+			if *record != string(leaf.LeafValue) {
+				http.Error(w, fmt.Sprintf("Map record %v does not match log value %v", *record, string(leaf.LeafValue)), http.StatusInternalServerError)
+				return
+			}
+			verifiedVoters[voter["public_id"]] = true
 		}
-		verifiedVoters[voter["public_id"]] = true
 	}
 
 	jsonData, err := json.Marshal(map[string]interface{}{
@@ -710,6 +809,9 @@ func main() {
 	http.HandleFunc("/voter/verify", verifyMembership)
 	http.HandleFunc("/proveAppendOnly", proveAppendOnly)
 	http.HandleFunc("/verifyAppendOnly", verifyAppendOnly)
+	if *testMode {
+		http.HandleFunc("/batchVoter", batchVoter)
+	}
 	log.Printf("Server listening on port 8084")
 	log.Fatal(http.ListenAndServe("0.0.0.0:8084", nil))
 }

@@ -43,6 +43,9 @@ deletemap::
 mapper::
 	go run vrlog.go --map_id=`cat mapid` --log_id=`cat logid` --map_log_id=`cat maplogid`
 
+test_mapper::
+	go run vrlog.go --map_id=`cat mapid` --log_id=`cat logid` --map_log_id=`cat maplogid` --testMode true
+
 extractmap::
 	go run extractmap/main.go --map_id=`cat mapid` 0
 

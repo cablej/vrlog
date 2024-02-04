@@ -208,6 +208,43 @@ func (i *MapInfo) SaveRecord(key string, value interface{}, g *grpc.ClientConn) 
 	return nil
 }
 
+// Bulk version of SaveRecord for map
+func (i *MapInfo) SaveRecordBulk(values []map[string]string, g *grpc.ClientConn) error {
+	revision, err := GetRevision(i, g)
+	if err != nil {
+		return err
+	}
+	revision = revision + 1
+
+	var tls []*trillian.MapLeaf
+
+	for _, value := range values {
+		v, err := json.Marshal(value)
+		if err != nil {
+			log.Printf("Marshal() failed: %v", err)
+			return err
+		}
+		hash := Hash(value["public_id"])
+		l := trillian.MapLeaf{
+			Index:     hash,
+			LeafValue: v,
+		}
+		tls = append(tls, &l)
+	}
+
+	req := trillian.SetMapLeavesRequest{
+		MapId:    i.MapID,
+		Leaves:   tls,
+		Revision: revision,
+	}
+
+	if _, err := i.Tc.SetLeaves(i.Ctx, &req); err != nil {
+		log.Printf("SetLeaves() failed: %v", err)
+		return err
+	}
+	return nil
+}
+
 // Converts record to JSON and hashes it before adding to map
 func (i *LogInfo) SaveRecord(value interface{}, g *grpc.ClientConn) error {
 	v, err := json.Marshal(value)
@@ -228,6 +265,31 @@ func (i *LogInfo) SaveRecord(value interface{}, g *grpc.ClientConn) error {
 	c := codes.Code(r.QueuedLeaf.GetStatus().GetCode())
 	if c != codes.OK && c != codes.AlreadyExists {
 		return fmt.Errorf("bad return status: %v", r.QueuedLeaf.GetStatus())
+	}
+
+	return nil
+}
+
+// Bulk version of SaveRecord for log
+func (i *LogInfo) SaveRecordBulk(values []map[string]string, g *grpc.ClientConn) error {
+
+	var tls []*trillian.LogLeaf
+
+	for _, value := range values {
+		v, err := json.Marshal(value)
+		if err != nil {
+			log.Printf("Marshal() failed: %v", err)
+			return err
+		}
+		tl := &trillian.LogLeaf{LeafValue: v}
+		tls = append(tls, tl)
+	}
+
+	// Send to Trillian
+	q := &trillian.QueueLeavesRequest{LogId: i.LogID, Leaves: tls}
+	_, err := i.Tc.QueueLeaves(i.Ctx, q)
+	if err != nil {
+		return err
 	}
 
 	return nil
