@@ -1,6 +1,5 @@
 package helpers
 
-// Key types
 import (
 	"context"
 	gocrypto "crypto"
@@ -14,8 +13,6 @@ import (
 	"github.com/google/trillian"
 	"github.com/google/trillian/client"
 	"github.com/google/trillian/crypto"
-
-	// "github.com/google/trillian/merkle/logverifier"
 
 	"github.com/google/trillian/merkle/rfc6962"
 	"github.com/google/trillian/types"
