@@ -3,12 +3,17 @@ package main
 import (
 	"bytes"
 	"context"
+	"crypto/aes"
+	"crypto/cipher"
 	"crypto/hmac"
+	"crypto/rand"
 	"crypto/sha256"
+	"encoding/base64"
 	"encoding/hex"
 	"encoding/json"
 	"flag"
 	"fmt"
+	"io"
 	"io/ioutil"
 	"log"
 	"net/http"
@@ -30,8 +35,8 @@ var (
 	mapID       = flag.Int64("map_id", 0, "Trillian MapID to write.")
 	logID       = flag.Int64("log_id", 0, "Trillian LogID to write.")
 	mapLogID    = flag.Int64("map_log_id", 0, "Trillian Map Log ID to write.")
-	idKey       = flag.String("id_key", "secret1", "Key to use to generate ids.")
-	saltKey     = flag.String("salt_key", "secret2", "Key used to generate salts.")
+	idKey       = flag.String("id_key", "secret1", "Key to use to generate ids. This should be a randomly generated 128-bit key.")
+	saltKey     = flag.String("salt_key", "secret2", "Key used to generate salts. This should be a randomly generated 128-bit key.")
 	fieldsStr   = flag.String("fields", "id,firstName,lastName,dob,ssn", "Comma-separated list of fields to include in the voter record.")
 	testMode    = flag.Bool("testMode", false, "Test mode (enables batch voter API for testing, disable in production)")
 	fields      = strings.Split(*fieldsStr, ",")
@@ -138,24 +143,52 @@ func writeMapHeadToLog() error {
 	return nil
 }
 
-func computeHmac(key string, data string) string {
+func computeHmacString(key string, data string) string {
 	h := hmac.New(sha256.New, []byte(key))
 	h.Write([]byte(data))
 	return hex.EncodeToString(h.Sum(nil))
 }
 
-func hashVoter(voter map[string]string, r_id string) map[string]string {
+func computeHmacByte(key []byte, data string) []byte {
+	h := hmac.New(sha256.New, key)
+	h.Write([]byte(data))
+	return h.Sum(nil)
+}
+
+func encryptVoter(voter map[string]string, r_id string) map[string]string {
 	// TODO: consider storing as byte array rather than JSON for space reasons
-	hashedVoter := make(map[string]string)
+	encryptedVoter := make(map[string]string)
 	for _, field := range fields {
-		// Unique salt per field, per voter
-		salt := computeHmac(*saltKey, fmt.Sprintf("%s|%s", r_id, field))
+		// Unique key per field, per voter. As saltKey is a randomly-generated 128 bit key, hmac is suitable as a KDF.
+		// The key for each field should be returned to the voter.
+		key := computeHmacByte([]byte(*saltKey), fmt.Sprintf("%s|%s", r_id, field))
+		encryptKey := computeHmacByte(key, "encrypt")
+		hashKey := computeHmacByte(key, "hash")
 		val := voter[field]
-		hashedVoter[field] = hex.EncodeToString(helpers.Hash(fmt.Sprintf("%s|%s", val, salt)))
+
+		// TODO: consider padding so as not to reveal length of field
+		block, err := aes.NewCipher(encryptKey)
+		if err != nil {
+			panic(err.Error())
+		}
+
+		nonce := make([]byte, 12)
+		if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
+			panic(err.Error())
+		}
+
+		aesgcm, err := cipher.NewGCM(block)
+		if err != nil {
+			panic(err.Error())
+		}
+
+		ciphertext := aesgcm.Seal(nil, nonce, []byte(val), nil)
+		hmac := computeHmacByte(hashKey, string(ciphertext))
+		encryptedVoter[field] = fmt.Sprintf("%s|%s|%s", base64.StdEncoding.EncodeToString(ciphertext), base64.StdEncoding.EncodeToString(nonce), base64.StdEncoding.EncodeToString(hmac))
 	}
-	// status is not hashed
-	hashedVoter["status"] = voter["status"]
-	return hashedVoter
+	// status is not encrypted
+	encryptedVoter["status"] = voter["status"]
+	return encryptedVoter
 }
 
 // TODO: consider storing a diff in the future
@@ -233,8 +266,8 @@ func batchVoter(w http.ResponseWriter, r *http.Request) {
 	for i := request.StartId; i < request.EndId; i++ {
 		request.Voter["id"] = fmt.Sprintf("%d", i)
 
-		r_id := computeHmac(*idKey, request.Voter["id"])
-		hashed := hashVoter(request.Voter, r_id)
+		r_id := computeHmacString(*idKey, request.Voter["id"])
+		hashed := encryptVoter(request.Voter, r_id)
 		meta, error := parseAndUpdateMetadata(nil, r_id, HistoryItem{
 			Date:      time.Now(),
 			EventType: "update",
@@ -312,8 +345,8 @@ func addVoter(w http.ResponseWriter, r *http.Request) {
 	}
 	defer gMap.Close()
 
-	r_id := computeHmac(*idKey, voter["id"])
-	hashed := hashVoter(voter, r_id)
+	r_id := computeHmacString(*idKey, voter["id"])
+	hashed := encryptVoter(voter, r_id)
 	existingVoter := helpers.GetValue(tmc, *mapID, helpers.Hash(r_id))
 	meta, error := parseAndUpdateMetadata(existingVoter, r_id, HistoryItem{
 		Date:      time.Now(),
