@@ -37,7 +37,7 @@ var (
 	mapLogID    = flag.Int64("map_log_id", 0, "Trillian Map Log ID to write.")
 	idKey       = flag.String("id_key", "secret1", "Key to use to generate ids. This should be a randomly generated 128-bit key.")
 	saltKey     = flag.String("salt_key", "secret2", "Key used to generate salts. This should be a randomly generated 128-bit key.")
-	fieldsStr   = flag.String("fields", "id,firstName,lastName,dob,ssn", "Comma-separated list of fields to include in the voter record.")
+	fieldsStr   = flag.String("fields", "id,firstName:32,lastName:32,dob,ssn", "Comma-separated list of fields to include in the voter record (and optionally including padded length).")
 	testMode    = flag.Bool("testMode", false, "Test mode (enables batch voter API for testing, disable in production)")
 	fields      = strings.Split(*fieldsStr, ",")
 )
@@ -159,27 +159,49 @@ func encryptVoter(voter map[string]string, r_id string) map[string]string {
 	// TODO: consider storing as byte array rather than JSON for space reasons
 	encryptedVoter := make(map[string]string)
 	for _, field := range fields {
+		paddedLength := 0
+		if strings.Contains(field, ":") {
+			split := strings.Split(field, ":")
+			if len(split) < 2 {
+				log.Printf("Length not specified for %s", field)
+				return nil
+			}
+			field = split[0]
+			padded, err := strconv.Atoi(split[1])
+			if err != nil {
+				log.Printf("Could not parse length for %s", field)
+				return nil
+			}
+			paddedLength = padded
+		}
 		// Unique key per field, per voter. As saltKey is a randomly-generated 128 bit key, hmac is suitable as a KDF.
 		// The key for each field should be returned to the voter.
 		key := computeHmacByte([]byte(*saltKey), fmt.Sprintf("%s|%s", r_id, field))
 		encryptKey := computeHmacByte(key, "encrypt")
 		hashKey := computeHmacByte(key, "hash")
 		val := voter[field]
+		if paddedLength > len(val) {
+			// Pad the field
+			val = fmt.Sprintf("%-*s\n", paddedLength, val)
+		}
 
 		// TODO: consider padding so as not to reveal length of field
 		block, err := aes.NewCipher(encryptKey)
 		if err != nil {
-			panic(err.Error())
+			log.Printf("%v", err.Error())
+			return nil
 		}
 
 		nonce := make([]byte, 12)
 		if _, err := io.ReadFull(rand.Reader, nonce); err != nil {
-			panic(err.Error())
+			log.Printf("%v", err.Error())
+			return nil
 		}
 
 		aesgcm, err := cipher.NewGCM(block)
 		if err != nil {
-			panic(err.Error())
+			log.Printf("%v", err.Error())
+			return nil
 		}
 
 		ciphertext := aesgcm.Seal(nil, nonce, []byte(val), nil)
