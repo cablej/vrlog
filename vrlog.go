@@ -185,7 +185,6 @@ func encryptVoter(voter map[string]string, r_id string) map[string]string {
 			val = fmt.Sprintf("%-*s\n", paddedLength, val)
 		}
 
-		// TODO: consider padding so as not to reveal length of field
 		block, err := aes.NewCipher(encryptKey)
 		if err != nil {
 			log.Printf("%v", err.Error())
