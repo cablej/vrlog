@@ -36,7 +36,7 @@ var (
 	logID       = flag.Int64("log_id", 0, "Trillian LogID to write.")
 	mapLogID    = flag.Int64("map_log_id", 0, "Trillian Map Log ID to write.")
 	idKey       = flag.String("id_key", "secret1", "Key to use to generate ids. This should be a randomly generated 128-bit key.")
-	saltKey     = flag.String("salt_key", "secret2", "Key used to generate salts. This should be a randomly generated 128-bit key.")
+	encKey      = flag.String("enc_key", "secret2", "Key used to encrypt fields. This should be a randomly generated 128-bit key.")
 	fieldsStr   = flag.String("fields", "id,firstName:32,lastName:32,dob,ssn", "Comma-separated list of fields to include in the voter record (and optionally including padded length).")
 	testMode    = flag.Bool("testMode", false, "Test mode (enables batch voter API for testing, disable in production)")
 	fields      = strings.Split(*fieldsStr, ",")
@@ -155,7 +155,7 @@ func computeHmacByte(key []byte, data string) []byte {
 	return h.Sum(nil)
 }
 
-func encryptVoter(voter map[string]string, r_id string) map[string]string {
+func encryptVoter(voter map[string]string, r_id string, revision int64) map[string]string {
 	// TODO: consider storing as byte array rather than JSON for space reasons
 	encryptedVoter := make(map[string]string)
 	for _, field := range fields {
@@ -174,9 +174,9 @@ func encryptVoter(voter map[string]string, r_id string) map[string]string {
 			}
 			paddedLength = padded
 		}
-		// Unique key per field, per voter. As saltKey is a randomly-generated 128 bit key, hmac is suitable as a KDF.
+		// Unique key per field, per voter. As encKey is a randomly-generated 128 bit key, hmac is suitable as a KDF.
 		// The key for each field should be returned to the voter.
-		key := computeHmacByte([]byte(*saltKey), fmt.Sprintf("%s|%s", r_id, field))
+		key := computeHmacByte([]byte(*encKey), fmt.Sprintf("%s|%s|%d", r_id, field, revision))
 		encryptKey := computeHmacByte(key, "encrypt")
 		hashKey := computeHmacByte(key, "hash")
 		val := voter[field]
@@ -212,7 +212,6 @@ func encryptVoter(voter map[string]string, r_id string) map[string]string {
 	return encryptedVoter
 }
 
-// TODO: consider storing a diff in the future
 func parseAndUpdateMetadata(existingVoter *string, r_id string, historyItem HistoryItem) (metadata string, error string) {
 	var meta Metadata
 	if existingVoter != nil {
@@ -283,12 +282,19 @@ func batchVoter(w http.ResponseWriter, r *http.Request) {
 	}
 	defer gMap.Close()
 
+	revision, err := helpers.GetRevision(mapInfo, gMap)
+	if err != nil {
+		http.Error(w, "Error returning version", http.StatusInternalServerError)
+		return
+	}
+
 	var voters []map[string]string
 	for i := request.StartId; i < request.EndId; i++ {
 		request.Voter["id"] = fmt.Sprintf("%d", i)
 
 		r_id := computeHmacString(*idKey, request.Voter["id"])
-		hashed := encryptVoter(request.Voter, r_id)
+
+		hashed := encryptVoter(request.Voter, r_id, revision)
 		meta, error := parseAndUpdateMetadata(nil, r_id, HistoryItem{
 			Date:      time.Now(),
 			EventType: "update",
@@ -366,8 +372,14 @@ func addVoter(w http.ResponseWriter, r *http.Request) {
 	}
 	defer gMap.Close()
 
+	revision, err := helpers.GetRevision(mapInfo, gMap)
+	if err != nil {
+		http.Error(w, "Error returning version", http.StatusInternalServerError)
+		return
+	}
+
 	r_id := computeHmacString(*idKey, voter["id"])
-	hashed := encryptVoter(voter, r_id)
+	hashed := encryptVoter(voter, r_id, revision)
 	existingVoter := helpers.GetValue(tmc, *mapID, helpers.Hash(r_id))
 	meta, error := parseAndUpdateMetadata(existingVoter, r_id, HistoryItem{
 		Date:      time.Now(),
