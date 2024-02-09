@@ -1,7 +1,7 @@
 var axios = require("axios");
 var exec = require("child_process").exec;
 
-const host = "http://localhost:8085/";
+const host = "http://localhost:8084/";
 
 function printTimes(start, upTo, batchSize, times, type) {
   if (times.length > 0) {

@@ -2,7 +2,7 @@
 
 VRLog provides a transparent record of voter registration data using transparency logs.
 
-Note that currently there is no authentication on this. In the future, authentication will be added to functions that modify the database. Election officials are expected to authenticate voters separately before modifying their record.
+Note that election officials are expected to authenticate voters separately before modifying their record.
 
 ## Setup
 

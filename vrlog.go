@@ -21,9 +21,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/cablej/vrlog/helpers"
 	"github.com/google/trillian"
 	"github.com/google/trillian/merkle/maphasher"
+	"github.com/x/vrlog/helpers"
 
 	"github.com/google/trillian/merkle/mapverifier"
 	"google.golang.org/grpc"
@@ -233,7 +233,6 @@ func parseAndUpdateMetadata(existingVoter *string, r_id string, historyItem Hist
 			Version: 0,
 			History: []HistoryItem{},
 		}
-		// TODO: allow importing existing records
 		meta.History = append(meta.History, HistoryItem{
 			Date:      time.Now(),
 			EventType: "register",

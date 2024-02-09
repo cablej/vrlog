@@ -1,4 +1,4 @@
-module github.com/cablej/vrlog
+module github.com/x/vrlog
 
 go 1.17
 
